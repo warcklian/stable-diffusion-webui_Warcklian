@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medidas para Pasaporte Venezolano</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #0052A4 0%, #CF142B 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 1000px;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+        header {
+            background: #00247D;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            font-size: 18px;
+            color: #FFCC00;
+        }
+        .content {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .image-section {
+            flex: 1;
+            min-width: 300px;
+            padding: 20px;
+            background: #f8f9fa;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .specs-section {
+            flex: 1;
+            min-width: 300px;
+            padding: 30px;
+        }
+        .row {
+            display: flex;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .row .image-section {
+            flex: 1;
+            min-width: 300px;
+        }
+        .row .specs-section {
+            flex: 1;
+            min-width: 300px;
+        }
+        .photo-template {
+            width: 300px;
+            height: 350px;
+            background: white;
+            border: 2px solid #00247D;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .photo-template::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            border: 3px solid #000;
+            border-radius: 0;
+            z-index: 1;
+        }
+        .photo-template::after {
+            content: "LÍMITE REAL DEL PAPEL FOTOGRÁFICO (512×764)";
+            position: absolute;
+            top: -25px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: bold;
+            white-space: nowrap;
+            z-index: 2;
+        }
+        .face-outline {
+            width: 200px;
+            height: 250px;
+            border: 2px dashed #CF142B;
+            border-radius: 50%;
+            position: relative;
+        }
+        .measurement {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 5px;
+            border-radius: 4px;
+            font-size: 12px;
+            box-shadow: 0 0 5px rgba(0, 0, 0, 0.1);
+            font-weight: bold;
+        }
+        .top-border {
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        .bottom-border {
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        .left-border {
+            left: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        .right-border {
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        .top-face {
+            top: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        .bottom-face {
+            bottom: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        .left-face {
+            left: 60px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        .right-face {
+            right: 60px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        h2 {
+            color: #00247D;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #eee;
+        }
+        .specs-list {
+            list-style: none;
+        }
+        .specs-list li {
+            margin-bottom: 15px;
+            padding-left: 25px;
+            position: relative;
+        }
+        .specs-list li:before {
+            content: "•";
+            color: #CF142B;
+            font-size: 20px;
+            position: absolute;
+            left: 0;
+            top: -2px;
+        }
+        .note {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-size: 14px;
+        }
+        .dimension-line {
+            position: absolute;
+            background: #CF142B;
+            height: 2px;
+            transform-origin: left center;
+        }
+        .dimension-line.horizontal {
+            width: 100px;
+        }
+        .dimension-line.vertical {
+            width: 2px;
+            height: 100px;
+            transform: rotate(90deg);
+        }
+        .dimension-line.top {
+            top: 30px;
+            left: 100px;
+        }
+        .dimension-line.bottom {
+            bottom: 30px;
+            left: 100px;
+        }
+        .dimension-line.left {
+            left: 30px;
+            top: 125px;
+        }
+        .dimension-line.right {
+            right: 30px;
+            top: 125px;
+        }
+        .flag {
+            display: flex;
+            justify-content: center;
+            margin-top: 15px;
+        }
+        .flag-color {
+            width: 30px;
+            height: 10px;
+        }
+        .blue {
+            background: #00247D;
+        }
+        .yellow {
+            background: #FFCC00;
+        }
+        .red {
+            background: #CF142B;
+        }
+        @media (max-width: 650px) {
+            .content {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Medidas para Fotografía de Pasaporte Venezolano</h1>
+            <p class="subtitle">Requisitos específicos para documentos venezolanos</p>
+            <div class="flag">
+                <div class="flag-color blue"></div>
+                <div class="flag-color yellow"></div>
+                <div class="flag-color red"></div>
+            </div>
+        </header>
+        
+        <div class="content">
+            <!-- Primera fila: Marco básico con medidas -->
+            <div class="row">
+                <div class="image-section">
+                    <div class="photo-template">
+                        <!-- Marco con silueta completa y medidas básicas -->
+                        <svg width="220" height="260" viewBox="0 0 220 260" fill="none" xmlns="http://www.w3.org/2000/svg" style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);opacity:0.85;border: 3px solid #32CD32; background-color: rgba(50, 205, 50, 0.1);">
+                            <!-- Silueta completa -->
+                            <ellipse cx="110" cy="80" rx="58" ry="76" fill="#1f2937"/>
+                            <rect x="96" y="143" width="28" height="26" rx="9" fill="#4A90E2"/>
+                            <path d="M20 202 C 20 172, 20 162, 110 162 C 200 162, 200 172, 200 202 L 200 260 C 164 260, 137 260, 110 260 C 83 260, 56 260, 20 260 Z" fill="#1f2937"/>
+                            
+                            <!-- Líneas de medida del marco -->
+                            <line x1="20" y1="20" x2="200" y2="20" stroke="#32CD32" stroke-width="3"/>
+                            <line x1="20" y1="240" x2="200" y2="240" stroke="#32CD32" stroke-width="3"/>
+                            <line x1="20" y1="20" x2="20" y2="240" stroke="#32CD32" stroke-width="3"/>
+                            <line x1="200" y1="20" x2="200" y2="240" stroke="#32CD32" stroke-width="3"/>
+                            
+                            <!-- Líneas de medida de la silueta -->
+                            <line x1="20" y1="20" x2="200" y2="20" stroke="#32CD32" stroke-width="2" opacity="0.6"/>
+                            <line x1="20" y1="240" x2="200" y2="240" stroke="#32CD32" stroke-width="2" opacity="0.6"/>
+                            <line x1="20" y1="20" x2="20" y2="240" stroke="#32CD32" stroke-width="2" opacity="0.6"/>
+                            <line x1="200" y1="20" x2="200" y2="240" stroke="#32CD32" stroke-width="2" opacity="0.6"/>
+                        </svg>
+                        
+                        <!-- Medidas del marco -->
+                        <div class="measurement top-border">35 mm</div>
+                        <div class="measurement bottom-border">45 mm</div>
+                        <div class="measurement left-border">35 mm</div>
+                        <div class="measurement right-border">45 mm</div>
+                        
+                        <!-- Medidas de la silueta -->
+                        <div class="measurement top-face">5-10 mm</div>
+                        <div class="measurement bottom-face">15-20 mm</div>
+                        <div class="measurement left-face">10-15 mm</div>
+                        <div class="measurement right-face">10-15 mm</div>
+                        
+                        <!-- Etiqueta del marco básico -->
+                        <div style="position:absolute;bottom:-24px;left:50%;transform:translateX(-50%);font-size:12px;background:rgba(50,205,50,0.9);color:#fff;padding:3px 6px;border-radius:4px;white-space:nowrap;">
+                            Marco Básico: 35×45mm con silueta
+                        </div>
+                    </div>
+                </div>
+                <div class="specs-section">
+                    <h2>Marco Básico de Referencia</h2>
+                    <p>Este marco muestra las dimensiones básicas del formato de pasaporte venezolano:</p>
+                    <ul class="specs-list">
+                        <li><strong>Dimensiones totales:</strong> 35 mm × 45 mm (ancho × alto)</li>
+                        <li><strong>Marco exterior negro:</strong> 1-2 mm de grosor en cada borde</li>
+                        <li><strong>Área efectiva:</strong> 33×43 mm (descontando marco negro)</li>
+                        <li><strong>Márgenes laterales:</strong> 12-18 mm cada lado (ajustados por marco negro)</li>
+                        <li><strong>Margen superior:</strong> 8-12 mm desde la coronilla (ajustado por marco negro)</li>
+                        <li><strong>Margen inferior:</strong> 18-25 mm desde la barbilla</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Segunda fila: Posición de ojos -->
+            <div class="row">
+                <div class="image-section">
+                    <div class="photo-template">
+                        <!-- Marco enfocado solo en posición de ojos -->
+                        <svg width="220" height="260" viewBox="0 0 220 260" fill="none" xmlns="http://www.w3.org/2000/svg" style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);opacity:0.85;border: 3px solid #FF69B4; background-color: rgba(255, 105, 180, 0.1);">
+                            <!-- Silueta básica -->
+                            <ellipse cx="110" cy="80" rx="58" ry="76" fill="#1f2937"/>
+                            <rect x="96" y="143" width="28" height="26" rx="9" fill="#4A90E2"/>
+                            <path d="M20 202 C 20 172, 20 162, 110 162 C 200 162, 200 172, 200 202 L 200 260 C 164 260, 137 260, 110 260 C 83 260, 56 260, 20 260 Z" fill="#1f2937"/>
+                            
+                            <!-- Solo marcadores de ojos -->
+                            <line x1="70" y1="80" x2="150" y2="80" stroke="#FF69B4" stroke-width="3" opacity="0.9"/>
+                            <line x1="110" y1="60" x2="110" y2="100" stroke="#FF69B4" stroke-width="3" opacity="0.9"/>
+                            <circle cx="94" cy="80" r="4" fill="#FF69B4"/>
+                            <circle cx="126" cy="80" r="4" fill="#FF69B4"/>
+                        </svg>
+                        
+                        <!-- Solo etiqueta de posición de ojos -->
+                        <div style="position:absolute;top:-24px;left:50%;transform:translateX(-50%);font-size:12px;background:rgba(255,105,180,0.9);color:#fff;padding:3px 6px;border-radius:4px;white-space:nowrap;">
+                            Ojos: y=80px (31% de 260px)
+                        </div>
+                    </div>
+                </div>
+                <div class="specs-section">
+                    <h2>Posición de los Ojos</h2>
+                    <p>La posición de los ojos es crítica para el reconocimiento facial:</p>
+                    <ul class="specs-list">
+                        <li><strong>Posición vertical:</strong> 31% desde el borde superior (y=80px de 260px)</li>
+                        <li><strong>Posición horizontal:</strong> Centrados en el marco (x=110px)</li>
+                        <li><strong>Distancia entre ojos:</strong> 32px (de 94px a 126px)</li>
+                        <li><strong>Altura de la cabeza:</strong> 30-34 mm desde barbilla a coronilla</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Tercera fila: Dimensiones del marco -->
+            <div class="row">
+                <div class="image-section">
+                    <div class="photo-template">
+                        <!-- Marco con silueta completa y dimensiones técnicas -->
+                        <svg width="220" height="260" viewBox="0 0 220 260" fill="none" xmlns="http://www.w3.org/2000/svg" style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);opacity:0.85;border: 3px solid #0000FF; background-color: rgba(0, 0, 255, 0.1);">
+                            <!-- Silueta completa -->
+                            <ellipse cx="110" cy="80" rx="58" ry="76" fill="#1f2937"/>
+                            <rect x="96" y="143" width="28" height="26" rx="9" fill="#4A90E2"/>
+                            <path d="M20 202 C 20 172, 20 162, 110 162 C 200 162, 200 172, 200 202 L 200 260 C 164 260, 137 260, 110 260 C 83 260, 56 260, 20 260 Z" fill="#1f2937"/>
+                            
+                            <!-- Línea central vertical -->
+                            <line x1="110" y1="20" x2="110" y2="240" stroke="#2E8B57" stroke-width="2" opacity="0.8" stroke-dasharray="5,5"/>
+                        </svg>
+                        
+                        <!-- Solo medidas del marco -->
+                        <div class="measurement top-border">35 mm</div>
+                        <div class="measurement bottom-border">45 mm</div>
+                        <div class="measurement left-border">35 mm</div>
+                        <div class="measurement right-border">45 mm</div>
+                        
+                        <!-- Etiqueta de dimensiones -->
+                        <div style="position:absolute;bottom:-24px;left:50%;transform:translateX(-50%);font-size:12px;background:rgba(0,0,0,0.6);color:#fff;padding:3px 6px;border-radius:4px;white-space:nowrap;">
+                            Marco: 220×260px (35×45mm)
+                        </div>
+                    </div>
+                </div>
+                <div class="specs-section">
+                    <h2>Dimensiones del Marco</h2>
+                    <p>Medidas exactas del formato de pasaporte:</p>
+                    <ul class="specs-list">
+                        <li><strong>Marco:</strong> 220×260px (equivalente a 35×45mm a 300 DPI)</li>
+                        <li><strong>Ancho:</strong> 35 mm (220px)</li>
+                        <li><strong>Alto:</strong> 45 mm (260px)</li>
+                        <li><strong>Centro horizontal:</strong> x=110px (mitad del ancho)</li>
+                        <li><strong>Proporción:</strong> 7:9 (ancho:alto)</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Cuarta fila: Perímetro del marco -->
+            <div class="row">
+                <div class="image-section">
+                    <div class="photo-template">
+                        <!-- Marco con silueta completa y perímetro del marco -->
+                        <svg width="220" height="260" viewBox="0 0 220 260" fill="none" xmlns="http://www.w3.org/2000/svg" style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);opacity:0.85;border: 3px solid #8B0000; background-color: rgba(139, 0, 0, 0.1);">
+                            <!-- Silueta completa -->
+                            <ellipse cx="110" cy="80" rx="58" ry="76" fill="#1f2937"/>
+                            <rect x="96" y="143" width="28" height="26" rx="9" fill="#4A90E2"/>
+                            <path d="M20 202 C 20 172, 20 162, 110 162 C 200 162, 200 172, 200 202 L 200 260 C 164 260, 137 260, 110 260 C 83 260, 56 260, 20 260 Z" fill="#1f2937"/>
+                            
+                            <!-- Líneas rojas del perímetro del marco -->
+                            <line x1="20" y1="20" x2="200" y2="20" stroke="#CF142B" stroke-width="4" opacity="0.9"/>
+                            <line x1="20" y1="240" x2="200" y2="240" stroke="#CF142B" stroke-width="4" opacity="0.9"/>
+                            <line x1="20" y1="20" x2="20" y2="240" stroke="#CF142B" stroke-width="4" opacity="0.9"/>
+                            <line x1="200" y1="20" x2="200" y2="240" stroke="#CF142B" stroke-width="4" opacity="0.9"/>
+                            
+                            <!-- Puntos de esquina -->
+                            <circle cx="20" cy="20" r="4" fill="#CF142B"/>
+                            <circle cx="200" cy="20" r="4" fill="#CF142B"/>
+                            <circle cx="20" cy="240" r="4" fill="#CF142B"/>
+                            <circle cx="200" cy="240" r="4" fill="#CF142B"/>
+                        </svg>
+                        
+                        <!-- Etiqueta del perímetro -->
+                        <div style="position:absolute;top:-24px;left:50%;transform:translateX(-50%);font-size:12px;background:rgba(207,20,43,0.9);color:#fff;padding:3px 6px;border-radius:4px;white-space:nowrap;">
+                            Perímetro: 20px-200px (35×45mm)
+                        </div>
+                    </div>
+                </div>
+                <div class="specs-section">
+                    <h2>Perímetro del Marco</h2>
+                    <p>Líneas rojas que definen el área de trabajo:</p>
+                    <ul class="specs-list">
+                        <li><strong>Líneas rojas:</strong> Delimitan el área exacta de 35×45mm</li>
+                        <li><strong>Posición:</strong> 20px desde los bordes del SVG</li>
+                        <li><strong>Área efectiva:</strong> 200×220px (35×45mm)</li>
+                        <li><strong>Esquinas:</strong> Puntos rojos en cada vértice</li>
+                        <li><strong>Función:</strong> Guía visual para posicionamiento</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Quinta fila: Referencia de cabeza -->
+            <div class="row">
+                <div class="image-section">
+                    <div class="photo-template">
+                        <!-- Marco con silueta completa y marcadores de cabeza -->
+                        <svg width="220" height="260" viewBox="0 0 220 260" fill="none" xmlns="http://www.w3.org/2000/svg" style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);opacity:0.85;border: 3px solid #800080; background-color: rgba(128, 0, 128, 0.1);">
+                            <!-- Silueta completa -->
+                            <ellipse cx="110" cy="80" rx="58" ry="76" fill="#1f2937"/>
+                            <rect x="96" y="143" width="28" height="26" rx="9" fill="#4A90E2"/>
+                            <path d="M20 202 C 20 172, 20 162, 110 162 C 200 162, 200 172, 200 202 L 200 260 C 164 260, 137 260, 110 260 C 83 260, 56 260, 20 260 Z" fill="#1f2937"/>
+                            
+                            <!-- Marcadores específicos de cabeza -->
+                            <ellipse cx="110" cy="80" rx="58" ry="76" fill="none" stroke="#FF6B6B" stroke-width="4" opacity="0.9"/>
+                            <circle cx="110" cy="80" r="5" fill="#FF6B6B"/>
+                            <text x="110" y="85" text-anchor="middle" fill="#FF6B6B" font-size="12" font-weight="bold">CABEZA</text>
+                        </svg>
+                        
+                        <!-- Etiqueta de cabeza -->
+                        <div style="position:absolute;top:-24px;left:50%;transform:translateX(-50%);font-size:12px;background:rgba(255,107,107,0.9);color:#fff;padding:3px 6px;border-radius:4px;white-space:nowrap;">
+                            Cabeza: 58×76px
+                        </div>
+                    </div>
+                </div>
+                <div class="specs-section">
+                    <h2>Referencia de Cabeza</h2>
+                    <p>Dimensiones y posición de la cabeza:</p>
+                    <ul class="specs-list">
+                        <li><strong>Dimensiones:</strong> 58×76px (óvalo proporcional)</li>
+                        <li><strong>Posición vertical:</strong> y=80px (31% de 260px)</li>
+                        <li><strong>Posición horizontal:</strong> x=110px (centro)</li>
+                        <li><strong>Referencia visual:</strong> Marco ovalado rojo</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Sexta fila: Referencia de hombros -->
+            <div class="row">
+                <div class="image-section">
+                    <div class="photo-template">
+                        <!-- Marco con silueta completa y marcadores de hombros -->
+                        <svg width="220" height="260" viewBox="0 0 220 260" fill="none" xmlns="http://www.w3.org/2000/svg" style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);opacity:0.85;border: 3px solid #FF0000; background-color: rgba(255, 0, 0, 0.1);">
+                            <!-- Silueta completa -->
+                            <ellipse cx="110" cy="80" rx="58" ry="76" fill="#1f2937"/>
+                            <rect x="96" y="143" width="28" height="26" rx="9" fill="#4A90E2"/>
+                            <!-- Silueta de hombros que toca los bordes izquierdo y derecho del marco rojo -->
+                            <path d="M20 202 C 20 172, 20 162, 110 162 C 200 162, 200 172, 200 202 L 200 260 C 164 260, 137 260, 110 260 C 83 260, 56 260, 20 260 Z" fill="#1f2937"/>
+                            
+                            <!-- Marcadores específicos de hombros -->
+                            <line x1="20" y1="202" x2="200" y2="202" stroke="#FF0000" stroke-width="5" opacity="0.9"/>
+                            <line x1="20" y1="260" x2="200" y2="260" stroke="#FF0000" stroke-width="5" opacity="0.9"/>
+                            <circle cx="20" cy="202" r="5" fill="#FF0000"/>
+                            <circle cx="200" cy="202" r="5" fill="#FF0000"/>
+                            <text x="110" y="220" text-anchor="middle" fill="#FF0000" font-size="12" font-weight="bold">HOMBROS</text>
+                        </svg>
+                        
+                        <!-- Etiqueta de hombros -->
+                        <div style="position:absolute;top:-24px;left:50%;transform:translateX(-50%);font-size:12px;background:rgba(255,0,0,0.9);color:#fff;padding:3px 6px;border-radius:4px;white-space:nowrap;">
+                            Hombros: 180×30px (toca bordes rojos)
+                        </div>
+                    </div>
+                </div>
+                <div class="specs-section">
+                    <h2>Referencia de Hombros</h2>
+                    <p>Dimensiones y posición de los hombros:</p>
+                    <ul class="specs-list">
+                        <li><strong>Dimensiones:</strong> 180×30px (ancho × alto) - TOCA LOS BORDES ROJOS</li>
+                        <li><strong>Posición vertical:</strong> y=202px (78% de 260px)</li>
+                        <li><strong>Ancho:</strong> 180px (20px a 200px) - TOCA LOS BORDES IZQUIERDO Y DERECHO DEL MARCO ROJO</li>
+                        <li><strong>Límites laterales:</strong> Desde 20px hasta 200px (bordes del marco rojo)</li>
+                        <li><strong>Referencia visual:</strong> Líneas rojas + puntos de referencia</li>
+                        <li><strong>CRÍTICO:</strong> Los hombros DEBEN tocar los bordes izquierdo y derecho del marco rojo (20px a 200px)</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Séptima fila: Referencia de centrado -->
+            <div class="row">
+                <div class="image-section">
+                    <div class="photo-template">
+                        <!-- Marco con silueta completa y línea de centrado -->
+                        <svg width="220" height="260" viewBox="0 0 220 260" fill="none" xmlns="http://www.w3.org/2000/svg" style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);opacity:0.85;border: 3px solid #00CED1; background-color: rgba(0, 206, 209, 0.1);">
+                            <!-- Silueta completa -->
+                            <ellipse cx="110" cy="80" rx="58" ry="76" fill="#1f2937"/>
+                            <rect x="96" y="143" width="28" height="26" rx="9" fill="#4A90E2"/>
+                            <path d="M20 202 C 20 172, 20 162, 110 162 C 200 162, 200 172, 200 202 L 200 260 C 164 260, 137 260, 110 260 C 83 260, 56 260, 20 260 Z" fill="#1f2937"/>
+                            
+                            <!-- Marcadores específicos de centrado -->
+                            <line x1="110" y1="20" x2="110" y2="240" stroke="#00CED1" stroke-width="5" opacity="0.9"/>
+                            <circle cx="110" cy="80" r="5" fill="#00CED1"/>
+                            <circle cx="110" cy="202" r="5" fill="#00CED1"/>
+                            <text x="110" y="15" text-anchor="middle" fill="#00CED1" font-size="12" font-weight="bold">CENTRO</text>
+                        </svg>
+                        
+                        <!-- Etiqueta de centrado -->
+                        <div style="position:absolute;top:-24px;left:50%;transform:translateX(-50%);font-size:12px;background:rgba(0,206,209,0.9);color:#fff;padding:3px 6px;border-radius:4px;white-space:nowrap;">
+                            Centro: x=110px
+                        </div>
+                    </div>
+                </div>
+                <div class="specs-section">
+                    <h2>Referencia de Centrado</h2>
+                    <p>Línea de centrado para alineación:</p>
+                    <ul class="specs-list">
+                        <li><strong>Posición horizontal:</strong> x=110px (centro del marco)</li>
+                        <li><strong>Línea vertical:</strong> Desde y=20px hasta y=240px</li>
+                        <li><strong>Puntos de referencia:</strong> Cabeza (y=80px) y hombros (y=202px)</li>
+                        <li><strong>Referencia visual:</strong> Línea naranja + puntos de alineación</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="specs-section">
+                <h2>Diferencia entre Marcos Internos y Marco Exterior</h2>
+                <div class="note" style="background: #fff3cd; border-left: 4px solid #ffc107;">
+                    <p><strong>📐 MARCOS INTERNOS DE COLORES:</strong></p>
+                    <ul style="margin: 10px 0; padding-left: 20px;">
+                        <li><strong>Función:</strong> Guías de posicionamiento para ubicar correctamente la cabeza, ojos y hombros</li>
+                        <li><strong>NO son límites de recorte</strong> - Solo indican dónde debe ubicarse la imagen</li>
+                        <li><strong>Colores:</strong> Naranja, verde, azul, rojo, morado, etc. para diferentes referencias</li>
+                        <li><strong>Propósito:</strong> Ayudar a posicionar la cabeza y hombros correctamente</li>
+                    </ul>
+                    
+                    <p><strong>⬛ MARCO EXTERIOR NEGRO (512×764):</strong></p>
+                    <ul style="margin: 10px 0; padding-left: 20px;">
+                        <li><strong>Función:</strong> Límite real del papel fotográfico</li>
+                        <li><strong>ES el límite de recorte</strong> - Aquí se cortaría físicamente la foto</li>
+                        <li><strong>Color:</strong> Negro para indicar que es el límite final</li>
+                        <li><strong>Propósito:</strong> Definir los límites reales donde se cortaría el papel fotográfico</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="specs-section">
+                <h2>Especificaciones Técnicas para Venezuela</h2>
+                <ul class="specs-list">
+                    <li><strong>Tamaño real del papel fotográfico:</strong> 512×764 píxeles (equivalente a 35 mm × 45 mm a 300 DPI)</li>
+                    <li><strong>Marco exterior negro:</strong> Define los límites reales donde se cortaría el papel fotográfico</li>
+                    <li><strong>Área efectiva de trabajo:</strong> 33×43 mm (descontando marco negro de 1-2mm)</li>
+                    <li><strong>Resolución recomendada:</strong> 300 píxeles por pulgada (ppp)</li>
+                    <li><strong>Fondo:</strong> Blanco liso sin texturas ni sombras</li>
+                    <li><strong>Distancia desde la parte superior de la cabeza al borde superior:</strong> 8-12 mm (ajustado por marco negro)</li>
+                    <li><strong>Altura del rostro (desde la barbilla hasta la coronilla):</strong> 30-34 mm</li>
+                    <li><strong>Distancia desde el borde de la foto hasta los lados de la cabeza:</strong> 12-18 mm cada lado (ajustado por marco negro)</li>
+                    <li><strong>Espacio entre la parte inferior de la barbilla y el borde inferior:</strong> 18-25 mm</li>
+                    <li><strong>HOMBROS CRÍTICOS:</strong> Deben tocar los bordes izquierdo y derecho del marco rojo (20px a 200px, total 180px de ancho)</li>
+                    <li><strong>Posición de hombros:</strong> y=202px (78% de 260px) - DEBEN TOCAR LOS BORDES IZQUIERDO Y DERECHO DEL MARCO ROJO</li>
+                    <li><strong>Ojos:</strong> Bien abiertos y visibles, con mirada frontal al objetivo</li>
+                    <li><strong>Expresión:</strong> Neutral, con la boca cerrada y sin sonreír</li>
+                    <li><strong>Vestimenta:</strong> Colores contrastantes con el fondo blanco (evitar blanco)</li>
+                    <li><strong>Accesorios:</strong> No permitidos (excepto lentes médicos indispensables y sin reflejos)</li>
+                    <li><strong>Iluminación:</strong> Uniforme, sin sombras en el rostro o fondo</li>
+                </ul>
+                
+                <div class="note">
+                    <p><strong>⚠️ CRÍTICO - Marco Exterior Negro (512×764):</strong> El marco negro exterior define los límites reales del papel fotográfico. Es donde se cortaría físicamente la foto. Cualquier cabello, accesorio o elemento que se extienda más allá de este marco será cortado en la foto final.</p>
+                    <p><strong>📐 MARCOS INTERNOS DE COLORES:</strong> Los marcos de colores internos son solo guías de posicionamiento para ubicar correctamente la cabeza, ojos y hombros. NO son límites de recorte.</p>
+                    <p><strong> ADVERTENCIA - Cabello Voluminoso:</strong> Para cabello abultado, ondulado, afros grandes, chinos con volumen o trenzas gruesas, se recomienda usar los márgenes máximos (12mm superior, 18mm laterales) o considerar recorte/peinado para evitar que el cabello toque el marco negro exterior.</p>
+                    <p><strong>⚠️ CRÍTICO - HOMBROS:</strong> Los hombros DEBEN tocar los bordes izquierdo y derecho del marco rojo (20px a 200px, total 180px de ancho). Deben tocar físicamente los bordes izquierdo y derecho del marco rojo para cumplir con los estándares del SAIME.</p>
+                    <p><strong>REFERENCIA VISUAL:</strong> Los marcos de colores internos son solo guías de posicionamiento. El marco negro exterior (512×764) es el límite real del papel fotográfico donde se cortaría la foto.</p>
+                    <p><strong>Nota importante:</strong> Estas especificaciones son según los requisitos actuales del SAIME (Servicio Administrativo de Identificación, Migración y Extranjería) de Venezuela.</p>
+                    <p>La fotografía debe ser reciente (tomada en los últimos 6 meses) y mostrar su apariencia actual. No se permiten fotos con uniformes o ropa que pueda confundirse con prendas oficiales.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

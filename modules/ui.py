@@ -1,10 +1,11 @@
-import datetime
+from datetime import datetime
 import mimetypes
 import os
 import sys
 from functools import reduce
 import warnings
 from contextlib import ExitStack
+from pathlib import Path
 
 import gradio as gr
 import gradio.utils
@@ -20,6 +21,14 @@ from modules.ui_common import create_refresh_button
 from modules.ui_gradio_extensions import reload_javascript
 
 from modules.shared import opts, cmd_opts
+
+# Importar sistema de gestión de memoria
+try:
+    from memory_manager import get_memory_manager, cleanup_after_generation, cleanup_before_model_change
+    MEMORY_MANAGER_AVAILABLE = True
+except ImportError:
+    MEMORY_MANAGER_AVAILABLE = False
+    print("⚠️ Sistema de gestión de memoria no disponible")
 
 import modules.infotext_utils as parameters_copypaste
 import modules.hypernetworks.ui as hypernetworks_ui
@@ -263,8 +272,55 @@ def create_ui():
 
     scripts.scripts_current = scripts.scripts_txt2img
     scripts.scripts_txt2img.initialize_scripts(is_img2img=False)
+    
+    # Variable global para controlar cancelación de generación
+    global generation_cancelled
+    generation_cancelled = False
 
-    with gr.Blocks(analytics_enabled=False) as txt2img_interface:
+    with gr.Blocks(analytics_enabled=False, css="""
+    /* Lado Izquierdo - Configuración Original (Azul claro) */
+    #left_column_original {
+        background-color: rgba(173, 216, 230, 0.2) !important;
+        border: 3px solid rgba(173, 216, 230, 0.6) !important;
+        border-radius: 10px !important;
+        padding: 15px !important;
+        margin: 10px !important;
+    }
+    
+    /* Lado Derecho - Pasaportes (Verde claro) */
+    #right_column_pasaportes {
+        background-color: rgba(144, 238, 144, 0.2) !important;
+        border: 3px solid rgba(144, 238, 144, 0.6) !important;
+        border-radius: 10px !important;
+        padding: 15px !important;
+        margin: 10px !important;
+    }
+    
+    /* Accordion de Nacionalidad Avanzada (Verde más intenso) */
+    .pasaportes_accordion {
+        background-color: rgba(34, 139, 34, 0.15) !important;
+        border: 2px solid rgba(34, 139, 34, 0.5) !important;
+        border-radius: 8px !important;
+        margin: 8px 0 !important;
+    }
+    
+    /* Accordion de Controles Genéticos (Morado) */
+    .genetic_accordion {
+        background-color: rgba(138, 43, 226, 0.15) !important;
+        border: 2px solid rgba(138, 43, 226, 0.5) !important;
+        border-radius: 8px !important;
+        margin: 8px 0 !important;
+    }
+    
+    /* Panel de salida (Gallery) - Naranja */
+    .gallery-container {
+        background-color: rgba(255, 165, 0, 0.15) !important;
+        border: 2px solid rgba(255, 165, 0, 0.5) !important;
+        border-radius: 8px !important;
+        padding: 10px !important;
+        margin: 5px !important;
+    }
+    """) as txt2img_interface:
         toprow = ui_toprow.Toprow(is_img2img=False, is_compact=shared.opts.compact_prompt_box)
 
         dummy_component = gr.Label(visible=False)
@@ -273,9 +329,2644 @@ def create_ui():
         extra_tabs.__enter__()
 
         with gr.Tab("Generation", id="txt2img_generation") as txt2img_generation_tab, ResizeHandleRow(equal_height=False):
+            # ===== LADO IZQUIERDO: CONFIGURACIÓN ORIGINAL DE TXT2IMG =====
+            with gr.Column(scale=1, elem_id="left_column_original"):
+                # Configuración normal de txt2img
+                with ExitStack() as stack:
+                    if shared.opts.txt2img_settings_accordion:
+                        stack.enter_context(gr.Accordion("Open for Settings", open=True))
+                    stack.enter_context(gr.Column(variant='compact', elem_id="txt2img_settings"))
+
+                    scripts.scripts_txt2img.prepare_ui()
+
+                    for category in ordered_ui_categories():
+                        if category == "prompt":
+                            toprow.create_inline_toprow_prompts()
+
+                        elif category == "dimensions":
+                            with FormRow():
+                                with gr.Column(elem_id="txt2img_column_size", scale=4):
+                                    width = gr.Slider(minimum=64, maximum=2048, step=8, label="Width", value=512, elem_id="txt2img_width")
+                                    height = gr.Slider(minimum=64, maximum=2048, step=8, label="Height", value=512, elem_id="txt2img_height")
+
+                                with gr.Column(elem_id="txt2img_dimensions_row", scale=1, elem_classes="dimensions-tools"):
+                                    res_switch_btn = ToolButton(value=switch_values_symbol, elem_id="txt2img_res_switch_btn", tooltip="Switch width/height")
+
+                                if opts.dimensions_and_batch_together:
+                                    with gr.Column(elem_id="txt2img_column_batch"):
+                                        batch_count = gr.Slider(minimum=1, step=1, label='Batch count', value=1, elem_id="txt2img_batch_count")
+                                        batch_size = gr.Slider(minimum=1, maximum=8, step=1, label='Batch size', value=1, elem_id="txt2img_batch_size")
+
+                        elif category == "cfg":
+                                with gr.Row():
+                                    cfg_scale = gr.Slider(minimum=1.0, maximum=30.0, step=0.5, label='CFG Scale', value=13.0, elem_id="txt2img_cfg_scale")
+
+                        elif category == "checkboxes":
+                                with FormRow(elem_classes="checkboxes-row", variant="compact"):
+                                    pass
+
+                        elif category == "accordions":
+                                with gr.Row(elem_id="txt2img_accordions", elem_classes="accordions"):
+                                    with InputAccordion(False, label="Hires. fix", elem_id="txt2img_hr") as enable_hr:
+                                        with enable_hr.extra():
+                                            hr_final_resolution = FormHTML(value="", elem_id="txtimg_hr_finalres", label="Upscaled resolution", interactive=False, min_width=0)
+
+                                        with FormRow(elem_id="txt2img_hires_fix_row1", variant="compact"):
+                                            hr_upscaler = gr.Dropdown(label="Upscaler", elem_id="txt2img_hr_upscaler", choices=[*shared.latent_upscale_modes, *[x.name for x in shared.sd_upscalers]], value=shared.latent_upscale_default_mode)
+                                            hr_second_pass_steps = gr.Slider(minimum=0, maximum=150, step=1, label='Hires steps', value=0, elem_id="txt2img_hires_steps")
+                                            denoising_strength = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, label='Denoising strength', value=0.7, elem_id="txt2img_denoising_strength")
+
+                                        with FormRow(elem_id="txt2img_hires_fix_row2", variant="compact"):
+                                            hr_scale = gr.Slider(minimum=1.0, maximum=4.0, step=0.05, label="Upscale by", value=2.0, elem_id="txt2img_hr_scale")
+                                            hr_resize_x = gr.Slider(minimum=0, maximum=2048, step=8, label="Resize width to", value=0, elem_id="txt2img_hr_resize_x")
+                                            hr_resize_y = gr.Slider(minimum=0, maximum=2048, step=8, label="Resize height to", value=0, elem_id="txt2img_hr_resize_y")
+
+                                        with FormRow(elem_id="txt2img_hires_fix_row3", variant="compact", visible=opts.hires_fix_show_sampler) as hr_sampler_container:
+
+                                            hr_checkpoint_name = gr.Dropdown(label='Checkpoint', elem_id="hr_checkpoint", choices=["Use same checkpoint"] + modules.sd_models.checkpoint_tiles(use_short=True), value="Use same checkpoint")
+                                            hr_sampler_name = gr.Dropdown(label='Hires sampler', elem_id="hr_sampler", choices=["Use same sampler"] + list(sd_samplers.samplers_map.keys()), value="Use same sampler")
+                                            hr_scheduler = gr.Dropdown(label='Scheduler', elem_id="hr_scheduler", choices=["Use same scheduler"] + list(sd_schedulers.schedulers), value="Use same scheduler")
+
+                                    with InputAccordion(False, label="Refiner", elem_id="txt2img_refiner") as enable_refiner:
+                                        with enable_refiner.extra():
+                                            refiner_checkpoint = gr.Dropdown(label='Checkpoint', elem_id="refiner_checkpoint", choices=["None"] + modules.sd_models.checkpoint_tiles(use_short=True), value="None")
+                                            refiner_switch_at = gr.Slider(value=0.8, label="Switch at", minimum=0.1, maximum=1.0, step=0.01, elem_id="refiner_switch_at")
+
+                        elif category == "batch":
+                                if not opts.dimensions_and_batch_together:
+                                    with FormRow(elem_id="txt2img_column_batch"):
+                                        batch_count = gr.Slider(minimum=1, step=1, label='Batch count', value=1, elem_id="txt2img_batch_count")
+                                        batch_size = gr.Slider(minimum=1, maximum=8, step=1, label='Batch size', value=1, elem_id="txt2img_batch_size")
+
+                        elif category == "override_settings":
+                                with FormRow(elem_id="txt2img_override_settings_row", variant="compact", elem_classes="override_settings_row"):
+                                    override_settings = create_override_settings_dropdown('txt2img', 'txt2img_override_settings')
+
+                        elif category == "scripts":
+                                with FormGroup(elem_id="txt2img_script_container"):
+                                    txt2img_script_runner = scripts.scripts_txt2img
+
+                # Panel de salida (gallery con botones) - agregado al lado izquierdo
+                with gr.Row():
+                    output_panel = create_output_panel("txt2img", opts.outdir_txt2img_samples, toprow)
+
+            # ===== LADO DERECHO: NUEVAS IMPLEMENTACIONES DE PASAPORTES =====
+            with gr.Column(scale=1, elem_id="right_column_pasaportes"):
+                # Funciones para los controles de pasaportes
+                def guardar_configuracion_genetica(beauty_control, skin_control, hair_control, eye_control, background_control, region_control="aleatorio"):
+                    """Guarda la configuración de controles genéticos avanzados."""
+                    try:
+                        import json
+                        config = {
+                            "beauty_control": beauty_control,
+                            "skin_control": skin_control,
+                            "hair_control": hair_control,
+                            "eye_control": eye_control,
+                            "background_control": background_control,
+                            "region_control": region_control,  # Agregar región
+                            "saved_at": datetime.now().isoformat()
+                        }
+                        config_path = Path("genetic_config.json")
+                        with open(config_path, 'w', encoding='utf-8') as f:
+                            json.dump(config, f, indent=2, ensure_ascii=False)
+                        return True
+                    except Exception as e:
+                        print(f"Error guardando configuración genética: {e}")
+                        return False
+                
+                def cargar_configuracion_genetica():
+                    """Carga la configuración guardada de controles genéticos avanzados."""
+                    try:
+                        import json
+                        config_path = Path("genetic_config.json")
+                        if config_path.exists():
+                            with open(config_path, 'r', encoding='utf-8') as f:
+                                config = json.load(f)
+                            return (
+                                config.get("beauty_control", "exceptionally_beautiful"),
+                                config.get("skin_control", "auto"),
+                                config.get("hair_control", "auto"),
+                                config.get("eye_control", "auto"),
+                                config.get("background_control", "white"),
+                                config.get("region_control", "aleatorio")  # Agregar región
+                            )
+                        else:
+                            return ("exceptionally_beautiful", "auto", "auto", "auto", "white", "aleatorio")
+                    except Exception as e:
+                        print(f"Error cargando configuración genética: {e}")
+                        return ("exceptionally_beautiful", "auto", "auto", "auto", "white", "aleatorio")
+
+                def guardar_plantilla_ui(nombre_plantilla, prompt, negative_prompt, width, height, cfg_scale, steps, sampler_name, seed, batch_count, batch_size, denoising_strength, hr_second_pass_steps, hr_scale, hr_resize_x, hr_resize_y, hr_upscaler, hr_sampler_name, hr_scheduler, refiner_checkpoint, refiner_switch_at):
+                    """Guarda la configuración actual de la UI en una plantilla JSON con validación mejorada."""
+                    try:
+                        import json
+                        import re
+                        from datetime import datetime
+                        
+                        # Validación del nombre
+                        if not nombre_plantilla or not nombre_plantilla.strip():
+                            return "❌ **Error**: El nombre de la plantilla no puede estar vacío.", gr.update(), nombre_plantilla
+                        
+                        nombre_plantilla = nombre_plantilla.strip()
+                        
+                        # Validar caracteres permitidos
+                        if not re.match(r'^[a-zA-Z0-9\s\-_áéíóúñÁÉÍÓÚÑ]+$', nombre_plantilla):
+                            return "❌ **Error**: El nombre solo puede contener letras, números, espacios, guiones y guiones bajos.", gr.update(), nombre_plantilla
+                        
+                        # Limitar longitud
+                        if len(nombre_plantilla) > 50:
+                            return "❌ **Error**: El nombre no puede tener más de 50 caracteres.", gr.update(), nombre_plantilla
+                        
+                        # Crear directorio de plantillas
+                        templates_dir = Path("outputs/templates")
+                        templates_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        # Crear nombre de archivo seguro
+                        nombre_archivo = re.sub(r'[^\w\-_áéíóúñÁÉÍÓÚÑ]', '_', nombre_plantilla)
+                        nombre_archivo = f"{nombre_archivo}.json"
+                        archivo_plantilla = templates_dir / nombre_archivo
+                        
+                        # Verificar si ya existe
+                        if archivo_plantilla.exists():
+                            return f"❌ **Error**: Ya existe una plantilla con el nombre '{nombre_plantilla}'. Elige otro nombre.", gr.update(), nombre_plantilla
+                        
+                        # Crear configuración de plantilla
+                        plantilla = {
+                            "nombre": nombre_plantilla,
+                            "fecha_creacion": datetime.now().isoformat(),
+                            "version": "1.0",
+                            "descripcion": f"Plantilla personalizada creada el {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                            "configuracion": {
+                                "prompt": prompt,
+                                "negative_prompt": negative_prompt,
+                                "width": width,
+                                "height": height,
+                                "cfg_scale": cfg_scale,
+                                "steps": steps,
+                                "sampler_name": sampler_name,
+                                "seed": seed,
+                                "batch_count": batch_count,
+                                "batch_size": batch_size,
+                                "denoising_strength": denoising_strength,
+                                "hr_second_pass_steps": hr_second_pass_steps,
+                                "hr_scale": hr_scale,
+                                "hr_resize_x": hr_resize_x,
+                                "hr_resize_y": hr_resize_y,
+                                "hr_upscaler": hr_upscaler,
+                                "hr_sampler_name": hr_sampler_name,
+                                "hr_scheduler": hr_scheduler,
+                                "refiner_checkpoint": refiner_checkpoint,
+                                "refiner_switch_at": refiner_switch_at
+                            }
+                        }
+                        
+                        # Guardar plantilla
+                        with open(archivo_plantilla, 'w', encoding='utf-8') as f:
+                            json.dump(plantilla, f, indent=2, ensure_ascii=False)
+                        
+                        # Actualizar dropdown
+                        dropdown_update = actualizar_dropdown_plantillas()
+                        
+                        mensaje = f"""✅ **Plantilla guardada exitosamente**
+
+📁 **Archivo**: `{archivo_plantilla.name}`
+📅 **Fecha**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+🎯 **Nombre**: {nombre_plantilla}
+📊 **Parámetros guardados**: {len(plantilla['configuracion'])} configuraciones
+
+💡 **Consejo**: Ahora puedes cargar esta plantilla en cualquier momento."""
+                        
+                        return mensaje, dropdown_update, ""  # Limpiar el campo de nombre
+                        
+                    except Exception as e:
+                        return f"❌ **Error guardando plantilla**: {str(e)}", gr.update(), nombre_plantilla
+
+                def cargar_plantilla_ui(archivo_plantilla):
+                    """Carga una plantilla guardada y aplica la configuración a la UI."""
+                    try:
+                        import json
+                        
+                        if not archivo_plantilla:
+                            return ("", "", 512, 512, 7.0, 20, "Euler a", -1, 1, 1, 0.7, 0, 2.0, 0, 0, "Latent", "Use same sampler", "Use same scheduler", "None", 0.8, "❌ **Error**: No se seleccionó ninguna plantilla.")
+                        
+                        # Leer plantilla
+                        with open(archivo_plantilla, 'r', encoding='utf-8') as f:
+                            plantilla = json.load(f)
+                        
+                        config = plantilla["configuracion"]
+                        
+                        mensaje = f"""✅ **Plantilla cargada exitosamente**
+
+📁 **Archivo**: `{Path(archivo_plantilla).name}`
+🎯 **Nombre**: {plantilla['nombre']}
+📅 **Creada**: {plantilla.get('fecha_creacion', 'Fecha no disponible')}
+📊 **Parámetros cargados**: {len(config)} configuraciones
+
+💡 **Consejo**: Todos los parámetros han sido aplicados a la UI."""
+                        
+                        # Retornar valores para actualizar la UI
+                        return (
+                            config["prompt"],
+                            config["negative_prompt"],
+                            config["width"],
+                            config["height"],
+                            config["cfg_scale"],
+                            config["steps"],
+                            config["sampler_name"],
+                            config["seed"],
+                            config["batch_count"],
+                            config["batch_size"],
+                            config["denoising_strength"],
+                            config["hr_second_pass_steps"],
+                            config["hr_scale"],
+                            config["hr_resize_x"],
+                            config["hr_resize_y"],
+                            config["hr_upscaler"],
+                            config["hr_sampler_name"],
+                            config["hr_scheduler"],
+                            config["refiner_checkpoint"],
+                            config["refiner_switch_at"],
+                            mensaje
+                        )
+                        
+                    except Exception as e:
+                        return ("", "", 512, 512, 7.0, 20, "Euler a", -1, 1, 1, 0.7, 0, 2.0, 0, 0, "Latent", "Use same sampler", "Use same scheduler", "None", 0.8, f"❌ **Error cargando plantilla**: {str(e)}")
+
+                def eliminar_plantilla_ui(archivo_plantilla):
+                    """Elimina una plantilla guardada."""
+                    try:
+                        if not archivo_plantilla:
+                            return "❌ **Error**: No se seleccionó ninguna plantilla para eliminar.", gr.update()
+                        
+                        # Verificar que el archivo existe
+                        if not Path(archivo_plantilla).exists():
+                            return "❌ **Error**: La plantilla no existe.", gr.update()
+                        
+                        # Leer información de la plantilla antes de eliminar
+                        try:
+                            import json
+                            with open(archivo_plantilla, 'r', encoding='utf-8') as f:
+                                plantilla = json.load(f)
+                            nombre_plantilla = plantilla.get('nombre', 'Plantilla sin nombre')
+                        except:
+                            nombre_plantilla = Path(archivo_plantilla).stem
+                        
+                        # Eliminar archivo
+                        Path(archivo_plantilla).unlink()
+                        
+                        # Actualizar dropdown
+                        dropdown_update = actualizar_dropdown_plantillas()
+                        
+                        mensaje = f"""🗑️ **Plantilla eliminada exitosamente**
+
+📁 **Archivo eliminado**: `{Path(archivo_plantilla).name}`
+🎯 **Nombre**: {nombre_plantilla}
+📅 **Eliminada**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+⚠️ **Advertencia**: Esta acción no se puede deshacer."""
+                        
+                        return mensaje, dropdown_update
+                        
+                    except Exception as e:
+                        return f"❌ **Error eliminando plantilla**: {str(e)}", gr.update()
+
+                def listar_plantillas_disponibles():
+                    """Lista todas las plantillas disponibles en el directorio templates."""
+                    try:
+                        import json
+                        templates_dir = Path("outputs/templates")
+                        if not templates_dir.exists():
+                            return "📁 **No hay plantillas guardadas**\n\n💡 **Sugerencia**: Guarda tu primera plantilla usando el botón '💾 Guardar Plantilla'"
+                        
+                        plantillas = []
+                        for archivo in templates_dir.glob("*.json"):
+                            try:
+                                with open(archivo, 'r', encoding='utf-8') as f:
+                                    plantilla = json.load(f)
+                                plantillas.append({
+                                    "archivo": str(archivo),
+                                    "nombre": plantilla.get("nombre", archivo.stem),
+                                    "fecha": plantilla.get("fecha_creacion", "Desconocida")
+                                })
+                            except:
+                                continue
+                        
+                        if not plantillas:
+                            return "📁 **No hay plantillas válidas**\n\n💡 **Sugerencia**: Guarda tu primera plantilla usando el botón '💾 Guardar Plantilla'"
+                        
+                        # Ordenar por fecha de creación (más recientes primero)
+                        plantillas.sort(key=lambda x: x["fecha"], reverse=True)
+                        
+                        resultado = "📋 **Plantillas Disponibles**\n\n"
+                        for i, plantilla in enumerate(plantillas, 1):
+                            fecha_formateada = plantilla["fecha"][:19].replace("T", " ") if plantilla["fecha"] != "Desconocida" else "Desconocida"
+                            resultado += f"**{i}.** {plantilla['nombre']}\n"
+                            resultado += f"   📅 {fecha_formateada}\n"
+                            resultado += f"   📁 `{Path(plantilla['archivo']).name}`\n\n"
+                        
+                        return resultado
+                        
+                    except Exception as e:
+                        return f"❌ **Error listando plantillas**: {e}"
+
+                def actualizar_dropdown_plantillas():
+                    """Actualiza el dropdown con las plantillas disponibles."""
+                    try:
+                        import json
+                        templates_dir = Path("outputs/templates")
+                        if not templates_dir.exists():
+                            return gr.update(choices=[], value=None)
+                        
+                        plantillas = []
+                        for archivo in templates_dir.glob("*.json"):
+                            try:
+                                with open(archivo, 'r', encoding='utf-8') as f:
+                                    plantilla = json.load(f)
+                                plantillas.append({
+                                    "archivo": str(archivo),
+                                    "nombre": plantilla.get("nombre", archivo.stem),
+                                    "fecha": plantilla.get("fecha_creacion", "Desconocida")
+                                })
+                            except:
+                                continue
+                        
+                        if not plantillas:
+                            return gr.update(choices=[], value=None)
+                        
+                        # Ordenar por fecha de creación (más recientes primero)
+                        plantillas.sort(key=lambda x: x["fecha"], reverse=True)
+                        
+                        # Crear choices para el dropdown
+                        choices = []
+                        for plantilla in plantillas:
+                            fecha_formateada = plantilla["fecha"][:19].replace("T", " ") if plantilla["fecha"] != "Desconocida" else "Desconocida"
+                            display_name = f"{plantilla['nombre']} ({fecha_formateada})"
+                            choices.append((display_name, plantilla["archivo"]))
+                        
+                        return gr.update(choices=choices, value=choices[0][1] if choices else None)
+                        
+                    except Exception as e:
+                        print(f"Error actualizando dropdown de plantillas: {e}")
+                        return gr.update(choices=[], value=None)
+                
+                def generar_caracteristicas_etnicas_diversas(nacionalidad, genero, edad, region="aleatorio"):
+                    """Genera características étnicas diversas para el método masivo básico."""
+                    import random
+                    import time
+                    
+                    # Agregar timestamp y múltiples factores para máxima aleatoriedad
+                    import hashlib
+                    unique_seed = int(time.time() * 1000000) + random.randint(1, 999999) + hash(f"{nacionalidad}{genero}{edad}{region}") % 1000000
+                    random.seed(unique_seed)
+                    
+                    # SIEMPRE usar región aleatoria para máxima diversidad
+                    regiones_disponibles = ["caracas", "maracaibo", "valencia", "barquisimeto", "ciudad_guayana", "maturin", "merida", "san_cristobal", "barcelona", "puerto_la_cruz", "ciudad_bolivar", "tucupita", "porlamar", "valera", "acarigua", "guanare", "san_fernando", "trujillo", "el_tigre", "cabimas", "punto_fijo", "ciudad_ojeda", "puerto_cabello", "valle_de_la_pascua", "san_juan_de_los_morros", "carora", "tocuyo", "duaca", "siquisique", "araure", "turen", "guanarito", "santa_elena", "el_venado", "san_rafael", "san_antonio", "la_fria", "rubio", "colon", "san_cristobal", "tachira", "apure", "amazonas", "delta_amacuro", "yacambu", "lara", "portuguesa", "cojedes", "guarico", "anzoategui", "monagas", "sucre", "nueva_esparta", "falcon", "zulia", "merida", "trujillo", "barinas", "yaracuy", "carabobo", "aragua", "miranda", "vargas", "distrito_capital"]
+                    region = random.choice(regiones_disponibles)
+                    
+                    # Características regionales que influyen en la apariencia
+                    caracteristicas_regionales = {
+                        "caracas": {"skin_modifier": "urban", "hair_modifier": "modern"},
+                        "maracaibo": {"skin_modifier": "coastal", "hair_modifier": "tropical"},
+                        "valencia": {"skin_modifier": "industrial", "hair_modifier": "practical"},
+                        "merida": {"skin_modifier": "mountain", "hair_modifier": "traditional"},
+                        "san_cristobal": {"skin_modifier": "border", "hair_modifier": "mixed"},
+                        "barcelona": {"skin_modifier": "eastern", "hair_modifier": "coastal"},
+                        "ciudad_guayana": {"skin_modifier": "industrial", "hair_modifier": "modern"},
+                        "maturin": {"skin_modifier": "eastern", "hair_modifier": "traditional"},
+                        "barquisimeto": {"skin_modifier": "central", "hair_modifier": "mixed"},
+                        "puerto_la_cruz": {"skin_modifier": "coastal", "hair_modifier": "tropical"}
+                    }
+                    
+                    # Características de piel por nacionalidad - EXPANDIDAS para mayor diversidad
+                    skin_tones = {
+                        "venezuelan": ["light", "fair", "medium", "medium-dark", "olive", "tan", "golden", "bronze", "caramel", "honey"],
+                        "cuban": ["light", "fair", "medium", "medium-dark", "olive", "tan", "golden", "bronze", "caramel", "honey"],
+                        "haitian": ["medium-dark", "dark", "very-dark", "ebony", "mahogany", "chocolate", "coffee", "rich brown"],
+                        "dominican": ["light", "fair", "medium", "medium-dark", "olive", "tan", "golden", "bronze", "caramel", "honey"],
+                        "mexican": ["light", "fair", "medium", "medium-dark", "olive", "tan", "golden", "bronze", "caramel", "honey"],
+                        "brazilian": ["light", "fair", "medium", "medium-dark", "olive", "tan", "golden", "bronze", "caramel", "honey", "dark", "rich brown"],
+                        "american": ["light", "fair", "medium", "medium-dark", "olive", "tan", "golden", "bronze", "caramel", "honey", "dark", "rich brown", "pale", "ivory"]
+                    }
+                    
+                    # Colores de cabello por nacionalidad - EXPANDIDOS para mayor diversidad
+                    hair_colors = {
+                        "venezuelan": ["black", "dark brown", "brown", "auburn", "chestnut", "chocolate", "espresso", "mahogany", "copper", "bronze"],
+                        "cuban": ["black", "dark brown", "brown", "auburn", "chestnut", "chocolate", "espresso", "mahogany", "copper", "bronze"],
+                        "haitian": ["black", "dark brown", "brown", "chocolate", "espresso", "mahogany", "jet black", "raven"],
+                        "dominican": ["black", "dark brown", "brown", "auburn", "chestnut", "chocolate", "espresso", "mahogany", "copper", "bronze"],
+                        "mexican": ["black", "dark brown", "brown", "auburn", "chestnut", "chocolate", "espresso", "mahogany", "copper", "bronze"],
+                        "brazilian": ["black", "dark brown", "brown", "auburn", "chestnut", "chocolate", "espresso", "mahogany", "copper", "bronze", "blonde", "light brown", "honey"],
+                        "american": ["black", "dark brown", "brown", "auburn", "chestnut", "chocolate", "espresso", "mahogany", "copper", "bronze", "blonde", "light brown", "honey", "red", "strawberry blonde", "platinum"]
+                    }
+                    
+                    # Colores de ojos por nacionalidad - EXPANDIDOS para mayor diversidad
+                    eye_colors = {
+                        "venezuelan": ["dark brown", "brown", "hazel", "amber", "light brown", "honey", "golden", "coffee", "chocolate", "mahogany"],
+                        "cuban": ["dark brown", "brown", "hazel", "amber", "light brown", "honey", "golden", "coffee", "chocolate", "mahogany"],
+                        "haitian": ["dark brown", "brown", "chocolate", "coffee", "mahogany", "ebony", "rich brown"],
+                        "dominican": ["dark brown", "brown", "hazel", "amber", "light brown", "honey", "golden", "coffee", "chocolate", "mahogany"],
+                        "mexican": ["dark brown", "brown", "hazel", "amber", "light brown", "honey", "golden", "coffee", "chocolate", "mahogany"],
+                        "brazilian": ["dark brown", "brown", "hazel", "amber", "light brown", "honey", "golden", "coffee", "chocolate", "mahogany", "green", "emerald", "olive"],
+                        "american": ["dark brown", "brown", "hazel", "amber", "light brown", "honey", "golden", "coffee", "chocolate", "mahogany", "green", "emerald", "olive", "blue", "steel blue", "gray", "gray-blue"]
+                    }
+                    
+                    # Estilos de cabello - EXPANDIDOS para mayor diversidad
+                    hair_styles = ["straight", "wavy", "curly", "coily", "braided", "ponytail", "bun", "pixie", "bob", "long", "shoulder-length", "layered", "textured", "voluminous", "sleek", "messy", "styled", "natural", "professional", "casual"]
+                    
+                    # Formas de cara - EXPANDIDAS para mayor diversidad
+                    face_shapes = ["oval", "round", "square", "heart", "diamond", "long", "triangular", "pear", "inverted triangle", "rectangular", "angular", "soft", "defined", "symmetrical"]
+                    
+                    # Características faciales - ULTRA EXPANDIDAS para máxima diversidad
+                    facial_features = {
+                        "nose": ["straight", "aquiline", "button", "wide", "narrow", "small", "prominent", "delicate", "strong", "refined", "classic", "distinctive", "roman", "snub", "hooked", "bulbous", "pointed", "flat", "upturned", "downturned", "asymmetric", "perfect", "crooked", "broad", "thin", "long", "short"],
+                        "lips": ["full", "medium", "thin", "wide", "narrow", "plump", "defined", "natural", "shapely", "expressive", "delicate", "strong", "pouty", "bow-shaped", "heart-shaped", "straight", "curved", "asymmetric", "perfect", "uneven", "thick", "thin", "long", "short", "prominent", "subtle"],
+                        "eyes": ["almond", "round", "hooded", "deep-set", "wide-set", "close-set", "upturned", "downturned", "monolid", "double-lid", "expressive", "intense", "gentle", "piercing", "sleepy", "alert", "droopy", "cat-like", "downturned", "upturned", "asymmetric", "perfect", "uneven", "large", "small", "prominent", "recessed"]
+                    }
+                    
+                    # Obtener características regionales
+                    region_traits = caracteristicas_regionales.get(region, {"skin_modifier": "standard", "hair_modifier": "standard"})
+                    
+                    # Seleccionar características aleatorias con influencia regional
+                    skin_tone = random.choice(skin_tones.get(nacionalidad, ["medium", "olive", "tan"]))
+                    hair_color = random.choice(hair_colors.get(nacionalidad, ["black", "dark brown", "brown"]))
+                    eye_color = random.choice(eye_colors.get(nacionalidad, ["dark brown", "brown", "hazel"]))
+                    hair_style = random.choice(hair_styles)
+                    face_shape = random.choice(face_shapes)
+                    nose_shape = random.choice(facial_features["nose"])
+                    lip_shape = random.choice(facial_features["lips"])
+                    eye_shape = random.choice(facial_features["eyes"])
+                    
+                    # Agregar variaciones adicionales ULTRA DIVERSAS para máxima unicidad
+                    additional_traits = {
+                        "freckles": random.choice(["none", "light", "moderate", "heavy", "scattered", "concentrated", "bridge", "cheeks", "forehead"]) if random.random() < 0.4 else "none",
+                        "eyebrows": random.choice(["thick", "medium", "thin", "arched", "straight", "defined", "natural", "bushy", "sparse", "uneven", "perfect", "asymmetric", "high", "low", "close", "wide", "angled", "curved"]),
+                        "jawline": random.choice(["strong", "soft", "defined", "rounded", "angular", "delicate", "square", "pointed", "weak", "prominent", "recessed", "asymmetric", "perfect", "uneven", "wide", "narrow"]),
+                        "cheekbones": random.choice(["high", "medium", "low", "prominent", "subtle", "defined", "sharp", "soft", "angular", "rounded", "asymmetric", "perfect", "uneven", "wide", "narrow", "hollow", "full"]),
+                        "skin_texture": random.choice(["smooth", "textured", "natural", "mature", "youthful", "rough", "fine", "coarse", "porous", "tight", "loose", "elastic", "dry", "oily", "combination"]),
+                        "facial_hair": random.choice(["clean-shaven", "stubble", "beard", "mustache", "goatee", "sideburns", "full-beard", "trimmed", "unkempt", "styled", "patchy", "thick", "thin"]) if genero == "hombre" else "none",
+                        "moles": random.choice(["none", "small", "medium", "large", "multiple", "cheek", "chin", "forehead", "nose"]) if random.random() < 0.2 else "none",
+                        "scars": random.choice(["none", "small", "faint", "visible", "cheek", "chin", "forehead"]) if random.random() < 0.1 else "none",
+                        "acne": random.choice(["none", "mild", "moderate", "severe", "scattered", "concentrated"]) if random.random() < 0.15 else "none",
+                        "wrinkles": random.choice(["none", "fine", "moderate", "deep", "forehead", "eye", "mouth", "neck"]) if edad > 30 and random.random() < 0.3 else "none"
+                    }
+                    
+                    return {
+                        "region": region,
+                        "region_traits": region_traits,
+                        "skin_tone": skin_tone,
+                        "hair_color": hair_color,
+                        "hair_style": hair_style,
+                        "eye_color": eye_color,
+                        "face_shape": face_shape,
+                        "nose_shape": nose_shape,
+                        "lip_shape": lip_shape,
+                        "eye_shape": eye_shape,
+                        "freckles": additional_traits["freckles"],
+                        "eyebrows": additional_traits["eyebrows"],
+                        "jawline": additional_traits["jawline"],
+                        "cheekbones": additional_traits["cheekbones"],
+                        "skin_texture": additional_traits["skin_texture"],
+                        "facial_hair": additional_traits["facial_hair"]
+                    }
+                
+                def obtener_parametros_nacionalidad(nacionalidad):
+                    """Obtiene los parámetros técnicos específicos para cada nacionalidad."""
+                    try:
+                        import json
+                        consulta_dir = Path(__file__).parent.parent / "Consulta"
+                        
+                        # Parámetros por defecto - HOMOGÉNEOS para todas las nacionalidades
+                        # Resolución fija para simular misma cámara, misma distancia
+                        # Configuración optimizada basada en resultados exitosos
+                        parametros_default = {
+                            "width": 512,
+                            "height": 768,
+                            "steps": 35,  # Optimizado para mejor calidad/velocidad
+                            "cfg_scale": 12.0,  # CFG optimizado para mejor adherencia al prompt
+                            "sampler": "DPM++ 2M Karras"
+                        }
+                        
+                        # Mapeo de nacionalidades a archivos de configuración
+                        config_files = {
+                            "venezuelan": "gui_config.json",
+                            "cuban": "templates/Pasaporte Cubano.json",
+                            "haitian": "templates/Haitiano Realista.json",
+                            "dominican": "templates/Documento Oficial.json",
+                            "mexican": "templates/Diversidad Étnica.json",
+                            "brazilian": "templates/Retrato Realista.json",
+                            "american": "templates/Alta Calidad.json"
+                        }
+                        
+                        config_file = config_files.get(nacionalidad, "gui_config.json")
+                        config_path = consulta_dir / config_file
+                        
+                        # SIEMPRE usar parámetros homogéneos para simular misma cámara
+                        # Esto garantiza que todas las imágenes tengan la misma resolución y configuración
+                        parametros = parametros_default.copy()
+                        
+                        # Opcional: Leer configuración específica solo para información
+                        if config_path.exists():
+                            try:
+                                with open(config_path, 'r', encoding='utf-8') as f:
+                                    config = json.load(f)
+                                # Solo usar steps y sampler de la configuración específica si están disponibles
+                                if "generation" in config:
+                                    gen_config = config["generation"]
+                                    parametros["steps"] = gen_config.get("steps", parametros_default["steps"])
+                                    parametros["sampler"] = gen_config.get("sampler", parametros_default["sampler"])
+                                elif "steps" in config:
+                                    parametros["steps"] = config.get("steps", parametros_default["steps"])
+                                    parametros["sampler"] = config.get("sampler", parametros_default["sampler"])
+                            except:
+                                pass  # Si hay error, usar parámetros por defecto
+                        
+                        return parametros
+                    except Exception as e:
+                        # En caso de error, devolver parámetros homogéneos por defecto
+                        return {
+                            "width": 512,  # Resolución homogénea
+                            "height": 512,  # Como misma cámara
+                            "steps": 35,  # Optimizado para mejor calidad/velocidad
+                            "cfg_scale": 12.0,  # CFG optimizado para mejor adherencia al prompt
+                            "sampler": "DPM++ 2M Karras"
+                        }
+                
+                def aplicar_prompt_pasaporte_func(nacionalidad, genero, edad):
+                    """Aplica el prompt de pasaporte y configura los parámetros técnicos específicos de la nacionalidad."""
+                    try:
+                        from generar_pasaportes import GeneradorPasaportes
+                        consulta_dir = Path(__file__).parent.parent / "Consulta"
+                        if consulta_dir.exists():
+                            generador = GeneradorPasaportes(str(consulta_dir))
+                            # Convertir edad a entero
+                            edad_int = int(edad)
+                            prompt_pos, prompt_neg = generador.generar_prompt_completo(nacionalidad, genero, edad_int, edad_int)
+                            
+                            # Obtener parámetros específicos de la nacionalidad
+                            parametros = obtener_parametros_nacionalidad(nacionalidad)
+                            
+                            info = f"✅ **Prompt y parámetros aplicados para {nacionalidad}**\n"
+                            info += f"- Género: {genero}, Edad: {edad_int} años\n"
+                            info += f"- Longitud prompt: {len(prompt_pos)} caracteres\n"
+                            info += f"🎯 **Parámetros técnicos configurados:**\n"
+                            info += f"- Dimensiones: {parametros['width']}x{parametros['height']}\n"
+                            info += f"- Steps: {parametros['steps']}\n"
+                            info += f"- CFG Scale: {parametros['cfg_scale']}\n"
+                            info += f"- Sampler: {parametros['sampler']}"
+                            
+                            return prompt_pos, prompt_neg, parametros['width'], parametros['height'], parametros['cfg_scale'], parametros['steps'], parametros['sampler'], -1, 1, 1, 0.7, 0, 2.0, 0, 0, "Latent", "Use same sampler", "Use same scheduler", "None", 0.8, info
+                        else:
+                            return "", "", 512, 512, 12.0, 35, "DPM++ 2M Karras", -1, 1, 1, 0.7, 0, 2.0, 0, 0, "Latent", "Use same sampler", "Use same scheduler", "None", 0.8, "❌ No se encontró el directorio Consulta"
+                    except Exception as e:
+                        return "", "", 512, 512, 12.0, 35, "DPM++ 2M Karras", -1, 1, 1, 0.7, 0, 2.0, 0, 0, "Latent", "Use same sampler", "Use same scheduler", "None", 0.8, f"❌ Error: {e}"
+                
+                def detener_generacion_func():
+                    """Detiene la generación en curso."""
+                    global generation_cancelled
+                    generation_cancelled = True
+                    return "🛑 Generación detenida por el usuario"
+                
+                def generar_masivo_genetico_func(nacionalidad, genero, edad, cantidad, region, edad_min, edad_max, beauty_control, skin_control, hair_control, eye_control, background_control, cfg_scale, steps, sampler_name, seed, width, height, batch_count, batch_size, denoising_strength, hr_second_pass_steps, hr_scale, hr_resize_x, hr_resize_y, hr_upscaler, hr_sampler_name, hr_scheduler, refiner_checkpoint, refiner_switch_at, progress=gr.Progress()):
+                    """Inicia la generación masiva con motor genético dinámico."""
+                    global generation_cancelled
+                    generation_cancelled = False  # Resetear flag de cancelación
+                    
+                    try:
+                        # Guardar configuración genética automáticamente
+                        guardar_configuracion_genetica(beauty_control, skin_control, hair_control, eye_control, background_control, region)
+                        
+                        import time
+                        import json
+                        import os
+                        import random
+                        from datetime import datetime
+                        import modules.processing
+                        import modules.shared as shared
+                        from modules.shared import opts
+                        from contextlib import closing
+                        from modules import sd_samplers
+                        
+                        # Convertir valores a enteros
+                        cantidad_int = int(cantidad)
+                        edad_min_int = int(edad_min)
+                        edad_max_int = int(edad_max)
+                        
+                        # Validar rango de edad
+                        if edad_min_int >= edad_max_int:
+                            return "", "", 1, 1, f"❌ Error: La edad mínima ({edad_min_int}) debe ser menor que la máxima ({edad_max_int})"
+                        
+                        # Obtener nombre del modelo actual
+                        try:
+                            from modules import shared
+                            model_name = shared.sd_model.sd_checkpoint_info.name_for_extra if shared.sd_model and hasattr(shared.sd_model, 'sd_checkpoint_info') else "unknown_model"
+                            # Limpiar nombre del modelo para usar como nombre de carpeta
+                            model_name_clean = "".join(c for c in model_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                            model_name_clean = model_name_clean.replace(' ', '_')
+                        except:
+                            model_name_clean = "unknown_model"
+                        
+                        # Crear directorio de salida con estructura: outputs/{modelo}/{metodo}/
+                        output_dir = Path("outputs")
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        
+                        # Crear subcarpeta para imágenes estándar de WebUI (nomenclatura 00000-xxx)
+                        standard_webui_dir = output_dir / model_name_clean / "webui_standard"
+                        standard_webui_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        batch_dir = output_dir / model_name_clean / "genetico_premium" / f"genetic_{nacionalidad}_{region}_{genero}_{timestamp}"
+                        batch_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        generated_count = 0
+                        failed_count = 0
+                        
+                        # Configurar barra de progreso
+                        progress(0, desc=f"Iniciando generación genética de {cantidad_int} imágenes...")
+                        
+                        # Inicializar motor genético avanzado
+                        try:
+                            from genetic_diversity_engine_advanced import AdvancedGeneticDiversityEngine
+                            genetic_engine = AdvancedGeneticDiversityEngine()
+                        except Exception as e:
+                            return "", "", 1, 1, f"❌ Error inicializando motor genético avanzado: {e}"
+                        
+                        # Generar perfiles genéticos únicos para cada imagen
+                        for i in range(cantidad_int):
+                            # Verificar si la generación fue cancelada
+                            if generation_cancelled:
+                                return "", "", 1, 1, "🛑 Generación cancelada por el usuario"
+                            
+                            try:
+                                # Debug: Inicio de generación
+                                print(f"🔍 Debug - Iniciando generación {i+1}/{cantidad_int}")
+                                
+                                # Actualizar progreso
+                                progress((i + 1) / cantidad_int, desc=f"Generando imagen {i+1}/{cantidad_int} con perfil genético único...")
+                                
+                                # Generar edad aleatoria dentro del rango
+                                edad_aleatoria = random.randint(edad_min_int, edad_max_int)
+                                
+                                # SIEMPRE usar región aleatoria para máxima diversidad
+                                regiones_disponibles = ["caracas", "maracaibo", "valencia", "barquisimeto", "ciudad_guayana", "maturin", "merida", "san_cristobal", "barcelona", "puerto_la_cruz", "ciudad_bolivar", "tucupita", "porlamar", "valera", "acarigua", "guanare", "san_fernando", "trujillo", "el_tigre", "cabimas", "punto_fijo", "ciudad_ojeda", "puerto_cabello", "valle_de_la_pascua", "san_juan_de_los_morros", "carora", "tocuyo", "duaca", "siquisique", "araure", "turen", "guanarito", "santa_elena", "el_venado", "san_rafael", "san_antonio", "la_fria", "rubio", "colon", "san_cristobal", "tachira", "apure", "amazonas", "delta_amacuro", "yacambu", "lara", "portuguesa", "cojedes", "guarico", "anzoategui", "monagas", "sucre", "nueva_esparta", "falcon", "zulia", "merida", "trujillo", "barinas", "yaracuy", "carabobo", "aragua", "miranda", "vargas", "distrito_capital"]
+                                region_genetica = random.choice(regiones_disponibles)
+                                
+                                # Generar perfil genético avanzado completo
+                                genetic_profile = genetic_engine.generate_advanced_genetic_profile(
+                                    nationality=nacionalidad,
+                                    region=region_genetica,
+                                    gender=genero,
+                                    age=edad_aleatoria,
+                                    beauty_control=beauty_control,
+                                    skin_control=skin_control,
+                                    hair_control=hair_control,
+                                    eye_control=eye_control
+                                )
+                                
+                                # Debug: Perfil genético generado
+                                print(f"🔍 Debug - Perfil genético generado: {genetic_profile.image_id}")
+                                
+                                # Generar prompts únicos basados en el perfil genético avanzado
+                                prompt, negative_prompt = genetic_engine.generate_prompt_from_advanced_profile(genetic_profile, background_control)
+                                
+                                # Debug: Prompts generados
+                                print(f"🔍 Debug - Prompt generado: {len(prompt)} caracteres")
+                                print(f"🔍 Debug - Negative prompt generado: {len(negative_prompt)} caracteres")
+                                
+                                # Crear JSON genético avanzado completo
+                                json_genetico = {
+                                    "image_id": genetic_profile.image_id,
+                                    "generated_at": genetic_profile.generated_at,
+                                    "metadata": {
+                                        "nationality": genetic_profile.nationality,
+                                        "region": genetic_profile.region,
+                                        "gender": genetic_profile.gender,
+                                        "age": genetic_profile.age,
+                                        "generation_type": "advanced_genetic_diversity_engine",
+                                        "unique_characteristics": True,
+                                        "uniqueness_score": genetic_profile.uniqueness_score,
+                                        "beauty_score": genetic_profile.beauty_score
+                                    },
+                                    "genetic_profile": {
+                                        "face_shape": genetic_profile.face_shape,
+                                        "face_width": genetic_profile.face_width,
+                                        "face_length": genetic_profile.face_length,
+                                        "jawline": genetic_profile.jawline,
+                                        "chin": genetic_profile.chin,
+                                        "cheekbones": genetic_profile.cheekbones,
+                                        "facial_symmetry": genetic_profile.facial_symmetry,
+                                        "bone_structure": genetic_profile.bone_structure,
+                                        "eye_color": genetic_profile.eye_color,
+                                        "eye_color_shade": genetic_profile.eye_color_shade,
+                                        "eye_shape": genetic_profile.eye_shape,
+                                        "eye_size": genetic_profile.eye_size,
+                                        "eye_spacing": genetic_profile.eye_spacing,
+                                        "eyelid_type": genetic_profile.eyelid_type,
+                                        "eyelashes": genetic_profile.eyelashes,
+                                        "eyelashes_length": genetic_profile.eyelashes_length,
+                                        "eyebrows": genetic_profile.eyebrows,
+                                        "eyebrows_thickness": genetic_profile.eyebrows_thickness,
+                                        "eyebrows_shape": genetic_profile.eyebrows_shape,
+                                        "nose_shape": genetic_profile.nose_shape,
+                                        "nose_size": genetic_profile.nose_size,
+                                        "nose_width": genetic_profile.nose_width,
+                                        "nose_bridge": genetic_profile.nose_bridge,
+                                        "nose_tip": genetic_profile.nose_tip,
+                                        "nostril_size": genetic_profile.nostril_size,
+                                        "lip_shape": genetic_profile.lip_shape,
+                                        "lip_size": genetic_profile.lip_size,
+                                        "lip_thickness": genetic_profile.lip_thickness,
+                                        "mouth_width": genetic_profile.mouth_width,
+                                        "lip_color": genetic_profile.lip_color,
+                                        "lip_fullness": genetic_profile.lip_fullness,
+                                        "skin_tone": genetic_profile.skin_tone,
+                                        "skin_tone_shade": genetic_profile.skin_tone_shade,
+                                        "skin_texture": genetic_profile.skin_texture,
+                                        "skin_undertone": genetic_profile.skin_undertone,
+                                        "skin_glow": genetic_profile.skin_glow,
+                                        "skin_elasticity": genetic_profile.skin_elasticity,
+                                        "skin_imperfections": genetic_profile.skin_imperfections,
+                                        "freckles": genetic_profile.freckles,
+                                        "freckles_density": genetic_profile.freckles_density,
+                                        "moles": genetic_profile.moles,
+                                        "moles_count": genetic_profile.moles_count,
+                                        "birthmarks": genetic_profile.birthmarks,
+                                        "scars": genetic_profile.scars,
+                                        "acne": genetic_profile.acne,
+                                        "age_spots": genetic_profile.age_spots,
+                                        "wrinkles": genetic_profile.wrinkles,
+                                        "hair_color": genetic_profile.hair_color,
+                                        "hair_color_shade": genetic_profile.hair_color_shade,
+                                        "hair_texture": genetic_profile.hair_texture,
+                                        "hair_length": genetic_profile.hair_length,
+                                        "hair_style": genetic_profile.hair_style,
+                                        "hair_density": genetic_profile.hair_density,
+                                        "hair_shine": genetic_profile.hair_shine,
+                                        "hair_curliness": genetic_profile.hair_curliness,
+                                        "hair_thickness": genetic_profile.hair_thickness,
+                                        "hairline": genetic_profile.hairline,
+                                        "age_characteristics": genetic_profile.age_characteristics,
+                                        "beauty_level": genetic_profile.beauty_level,
+                                        "attractiveness_factors": genetic_profile.attractiveness_factors,
+                                        "ethnic_beauty_features": genetic_profile.ethnic_beauty_features,
+                                        "ethnic_features": genetic_profile.ethnic_features,
+                                        "genetic_heritage": genetic_profile.genetic_heritage
+                                    },
+                                    "prompt": prompt,
+                                    "negative_prompt": negative_prompt,
+                                    "generation_parameters": {
+                                        "width": 512,
+                                        "height": 512,
+                                        "steps": 35,
+                                        "cfg_scale": 12.0,
+                                        "sampler_name": "DPM++ 2M Karras",
+                                        "seed": random.randint(1, 2147483647),  # Seed único para cada imagen
+                                        "batch_size": 1,
+                                        "n_iter": 1
+                                    },
+                                    "controls_used": {
+                                        "beauty_control": beauty_control,
+                                        "skin_control": skin_control,
+                                        "hair_control": hair_control,
+                                        "eye_control": eye_control,
+                                        "age_range": f"{edad_min_int}-{edad_max_int}",
+                                        "region": region
+                                    },
+                                    "replication_info": {
+                                        "description": "Configuración genética completa para replicar esta imagen exacta",
+                                        "genetic_diversity": "Perfil genético único con características étnicas reales",
+                                        "uniqueness": "Cada imagen tiene un perfil genético completamente único",
+                                        "controls": "Configuración de controles utilizada para generar esta imagen"
+                                    }
+                                }
+                                
+                                # Parámetros homogéneos
+                                params = {
+                                    'prompt': prompt,
+                                    'negative_prompt': negative_prompt,
+                                    'width': width,
+                                    'height': height,
+                                    'steps': steps,
+                                    'cfg_scale': cfg_scale,
+                                    'sampler_name': sampler_name,
+                                    'seed': seed,
+                                    'batch_size': batch_size,
+                                    'n_iter': batch_count
+                                }
+                                
+                                # Generar imagen usando la API interna de WebUI
+                                try:
+                                    # Debug: Antes de crear objeto de procesamiento
+                                    print(f"🔍 Debug - Creando objeto de procesamiento para imagen {i+1}")
+                                    
+                                    # Crear objeto de procesamiento
+                                    p = modules.processing.StableDiffusionProcessingTxt2Img(
+                                        sd_model=shared.sd_model,
+                                        outpath_samples=str(standard_webui_dir),  # Usar carpeta webui_standard para nomenclatura 00000-xxx
+                                        outpath_grids=None,   # No guardar grids
+                                        prompt=params['prompt'],
+                                        negative_prompt=params['negative_prompt'],
+                                        batch_size=params['batch_size'],
+                                        n_iter=params['n_iter'],
+                                        cfg_scale=params['cfg_scale'],
+                                        width=params['width'],
+                                        height=params['height'],
+                                        enable_hr=hr_second_pass_steps > 0,
+                                        denoising_strength=denoising_strength,
+                                        hr_scale=hr_scale,
+                                        hr_upscaler=hr_upscaler,
+                                        hr_second_pass_steps=hr_second_pass_steps,
+                                        hr_resize_x=hr_resize_x,
+                                        hr_resize_y=hr_resize_y,
+                                        hr_checkpoint_name=hr_checkpoint_name,
+                                        hr_sampler_name=hr_sampler_name,
+                                        hr_scheduler=hr_scheduler,
+                                        hr_prompt="",
+                                        hr_negative_prompt="",
+                                        override_settings={
+                                            'save_to_dirs': False,  # No crear subcarpetas con fechas
+                                            'save_images_replace_action': "Add number suffix"
+                                        }
+                                    )
+                                    
+                                    # Debug: Objeto de procesamiento creado
+                                    print(f"🔍 Debug - Objeto de procesamiento creado: {p}")
+                                    
+                                    # Configurar sampler
+                                    try:
+                                        sampler = sd_samplers.samplers_map.get(params['sampler_name'])
+                                        if sampler is None:
+                                            # Fallback al primer sampler disponible
+                                            sampler = list(sd_samplers.samplers_map.values())[0]
+                                        p.sampler = sampler
+                                    except Exception as e:
+                                        print(f"⚠️ Error configurando sampler: {e}")
+                                        # Usar sampler por defecto
+                                        p.sampler = list(sd_samplers.samplers_map.values())[0]
+                                    
+                                    # Configurar steps
+                                    p.steps = params['steps']
+                                    
+                                    # Configurar seed
+                                    if params['seed'] != -1:
+                                        p.seed = params['seed']
+                                    
+                                    # Procesar imagen
+                                    with closing(p):
+                                        processed = modules.processing.process_images(p)
+                                    
+                                    result = processed.images if processed else []
+                                    
+                                    # Debug: Imprimir información del resultado
+                                    print(f"🔍 Debug Genético - processed: {processed}")
+                                    print(f"🔍 Debug Genético - result: {result}")
+                                    print(f"🔍 Debug Genético - len(result): {len(result) if result else 0}")
+                                    if result and len(result) > 0:
+                                        print(f"🔍 Debug Genético - result[0]: {result[0]}")
+                                        print(f"🔍 Debug Genético - result[0] type: {type(result[0])}")
+                                        print(f"🔍 Debug Genético - hasattr(result[0], 'save'): {hasattr(result[0], 'save')}")
+                                    
+                                    if result and len(result) > 0 and result[0] is not None:
+                                        # Guardar imagen con nomenclatura genética
+                                        filename = f"genetic_{nacionalidad}_{region}_{genero}_{edad_aleatoria}_{i+1}_{timestamp}.png"
+                                        filepath = batch_dir / filename
+                                        
+                                        # Debug: Imprimir información de la ruta
+                                        print(f"🔍 Debug - batch_dir: {batch_dir}")
+                                        print(f"🔍 Debug - filename: {filename}")
+                                        print(f"🔍 Debug - filepath: {filepath}")
+                                        print(f"🔍 Debug - filepath type: {type(filepath)}")
+                                        print(f"🔍 Debug - str(filepath): {str(filepath)}")
+                                        
+                                        # Verificar que la ruta sea válida
+                                        if filepath and str(filepath):
+                                            # Guardar la imagen PIL
+                                            if hasattr(result[0], 'save'):
+                                                result[0].save(str(filepath))
+                                            else:
+                                                # Si es una ruta de archivo
+                                                import shutil
+                                                shutil.copy2(result[0], str(filepath))
+                                        else:
+                                            print(f"⚠️ Error: Ruta de archivo inválida: {filepath}")
+                                            failed_count += 1
+                                            continue
+                                        
+                                        # Guardar configuración JSON genética
+                                        json_filename = filename.replace('.png', '.json')
+                                        json_filepath = batch_dir / json_filename
+                                        
+                                        # Verificar que la ruta del JSON sea válida
+                                        if json_filepath and str(json_filepath):
+                                            # Agregar información de la imagen generada al JSON genético
+                                            json_genetico["image_info"] = {
+                                                "filename": filename,
+                                                "filepath": str(filepath),
+                                                "generation_successful": True,
+                                                "generation_time": datetime.now().isoformat()
+                                            }
+                                            
+                                            with open(str(json_filepath), 'w', encoding='utf-8') as f:
+                                                json.dump(json_genetico, f, indent=2, ensure_ascii=False)
+                                            
+                                            generated_count += 1
+                                            print(f"✅ Imagen genética {i+1} generada: {filename}")
+                                        else:
+                                            print(f"⚠️ Error: Ruta de JSON inválida: {json_filepath}")
+                                            failed_count += 1
+                                            continue
+                                    else:
+                                        failed_count += 1
+                                        print(f"❌ Error generando imagen genética {i+1}: No se obtuvo resultado de la generación.")
+                                        
+                                except Exception as e:
+                                    failed_count += 1
+                                    print(f"❌ Error en generación genética {i+1}: {e}")
+                                    print(f"🔍 Debug - Tipo de error: {type(e)}")
+                                    print(f"🔍 Debug - Traceback completo:")
+                                    import traceback
+                                    traceback.print_exc()
+                            
+                            except Exception as e:
+                                failed_count += 1
+                                print(f"❌ Error procesando perfil genético {i+1}: {e}")
+                        
+                        # Resultado final
+                        progress(1.0, desc="Generación genética completada")
+                        
+                        resultado = f"✅ **Generación masiva genética completada**\n\n"
+                        resultado += f"📊 **Estadísticas finales:**\n"
+                        resultado += f"- Imágenes generadas: {generated_count}\n"
+                        resultado += f"- Imágenes fallidas: {failed_count}\n"
+                        resultado += f"- Total procesadas: {cantidad_int}\n"
+                        resultado += f"- Modelo utilizado: {model_name_clean}\n"
+                        resultado += f"- Directorio: {batch_dir}\n\n"
+                        resultado += f"🧬 **Características genéticas avanzadas implementadas:**\n"
+                        resultado += f"- ✅ **Perfiles genéticos únicos** para cada imagen\n"
+                        resultado += f"- ✅ **Diversidad étnica real** basada en datos demográficos\n"
+                        resultado += f"- ✅ **Características faciales detalladas** (forma, ojos, nariz, boca)\n"
+                        resultado += f"- ✅ **Tonos de piel dinámicos** según región y control\n"
+                        resultado += f"- ✅ **Colores de cabello y ojos variables** con tonalidades específicas\n"
+                        resultado += f"- ✅ **Edades aleatorias** en rango {edad_min_int}-{edad_max_int}\n"
+                        resultado += f"- ✅ **Niveles de belleza controlables** ({beauty_control})\n"
+                        resultado += f"- ✅ **Belleza universal** sin sesgos étnicos\n"
+                        resultado += f"- ✅ **Imperfecciones realistas** según edad\n"
+                        resultado += f"- ✅ **Características étnicas específicas** de {region}\n"
+                        resultado += f"- ✅ **Herencia genética** (mestizo, afrodescendiente, etc.)\n"
+                        resultado += f"- ✅ **Características de belleza étnicas** específicas\n"
+                        resultado += f"- ✅ **Score de belleza** independiente del tono de piel\n"
+                        resultado += f"- ✅ **Parámetros homogéneos** (512x512, CFG 9.0)\n"
+                        resultado += f"- ✅ **Barra de progreso** en tiempo real\n"
+                        resultado += f"- ✅ **JSON genético avanzado completo** por imagen\n\n"
+                        resultado += f"🎯 **Controles utilizados:**\n"
+                        resultado += f"- Región: {region}\n"
+                        resultado += f"- Rango de edad: {edad_min_int}-{edad_max_int}\n"
+                        resultado += f"- Control de belleza: {beauty_control}\n"
+                        resultado += f"- Control de piel: {skin_control}\n"
+                        resultado += f"- Control de cabello: {hair_control}\n"
+                        resultado += f"- Control de ojos: {eye_control}\n\n"
+                        resultado += f"📁 **Archivos generados en**: {batch_dir}\n"
+                        resultado += f"🎉 **¡Generación genética masiva completada exitosamente!**\n"
+                        
+                        return "", "", 1, 1, resultado
+                        
+                    except Exception as e:
+                        return "", "", 1, 1, f"❌ Error: {e}"
+                
+                def generar_masivo_pasaporte_func(nacionalidad, genero, edad, cantidad, edad_min, edad_max, region, cfg_scale, steps, sampler_name, seed, width, height, batch_count, batch_size, denoising_strength, hr_second_pass_steps, hr_scale, hr_resize_x, hr_resize_y, hr_upscaler, hr_sampler_name, hr_scheduler, refiner_checkpoint, refiner_switch_at, progress=gr.Progress()):
+                    """Inicia la generación masiva real leyendo archivos JSON individuales con barra de progreso."""
+                    global generation_cancelled
+                    generation_cancelled = False  # Resetear flag de cancelación
+                    
+                    try:
+                        import time
+                        import json
+                        import os
+                        import random
+                        from datetime import datetime
+                        
+                        # Convertir valores a enteros
+                        cantidad_int = int(cantidad)
+                        edad_int = int(edad)
+                        
+                        # Directorio de archivos JSON
+                        consulta_dir = Path(__file__).parent.parent / "Consulta"
+                        
+                        # Buscar archivos JSON de la nacionalidad
+                        json_files = []
+                        for file_path in consulta_dir.rglob("*.json"):
+                            if nacionalidad.lower() in file_path.name.lower():
+                                json_files.append(file_path)
+                        
+                        # Si no hay archivos específicos, usar archivos generales
+                        if not json_files:
+                            for file_path in consulta_dir.rglob("*.json"):
+                                json_files.append(file_path)
+                        
+                        if not json_files:
+                            return "", "", 1, 1, f"❌ No se encontraron archivos JSON para {nacionalidad}"
+                        
+                        # Obtener nombre del modelo actual
+                        try:
+                            from modules import shared
+                            model_name = shared.sd_model.sd_checkpoint_info.name_for_extra if shared.sd_model and hasattr(shared.sd_model, 'sd_checkpoint_info') else "unknown_model"
+                            # Limpiar nombre del modelo para usar como nombre de carpeta
+                            model_name_clean = "".join(c for c in model_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                            model_name_clean = model_name_clean.replace(' ', '_')
+                        except:
+                            model_name_clean = "unknown_model"
+                        
+                        # Crear directorio de salida con estructura: outputs/{modelo}/{metodo}/
+                        output_dir = Path("outputs")
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        
+                        # Crear subcarpeta para imágenes estándar de WebUI (nomenclatura 00000-xxx)
+                        standard_webui_dir = output_dir / model_name_clean / "webui_standard"
+                        standard_webui_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        batch_dir = output_dir / model_name_clean / "masivo_basico" / f"massive_{nacionalidad}_{genero}_{timestamp}"
+                        batch_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        generated_count = 0
+                        failed_count = 0
+                        total_files = min(len(json_files), cantidad_int)
+                        
+                        # Configurar barra de progreso
+                        progress(0, desc=f"Iniciando generación de {total_files} imágenes...")
+                        
+                        # Generar JSONs dinámicos únicos para cada imagen
+                        for i in range(cantidad_int):
+                            # Verificar si la generación fue cancelada
+                            if generation_cancelled:
+                                return "", "", 1, 1, "🛑 Generación cancelada por el usuario"
+                            
+                            try:
+                                # Actualizar progreso
+                                progress((i + 1) / cantidad_int, desc=f"Generando imagen {i+1}/{cantidad_int} con características únicas...")
+                                
+                                # Generar características étnicas dinámicas únicas
+                                try:
+                                    # Generar edad aleatoria dentro del rango especificado
+                                    edad_min_int = int(edad_min)
+                                    edad_max_int = int(edad_max)
+                                    edad_aleatoria = random.randint(edad_min_int, edad_max_int)
+                                    
+                                    # SIEMPRE usar región aleatoria para máxima diversidad
+                                    regiones_disponibles = ["caracas", "maracaibo", "valencia", "barquisimeto", "ciudad_guayana", "maturin", "merida", "san_cristobal", "barcelona", "puerto_la_cruz", "ciudad_bolivar", "tucupita", "porlamar", "valera", "acarigua", "guanare", "san_fernando", "trujillo", "el_tigre", "cabimas", "punto_fijo", "ciudad_ojeda", "puerto_cabello", "valle_de_la_pascua", "san_juan_de_los_morros", "carora", "tocuyo", "duaca", "siquisique", "araure", "turen", "guanarito", "santa_elena", "el_venado", "san_rafael", "san_antonio", "la_fria", "rubio", "colon", "san_cristobal", "tachira", "apure", "amazonas", "delta_amacuro", "yacambu", "lara", "portuguesa", "cojedes", "guarico", "anzoategui", "monagas", "sucre", "nueva_esparta", "falcon", "zulia", "merida", "trujillo", "barinas", "yaracuy", "carabobo", "aragua", "miranda", "vargas", "distrito_capital"]
+                                    region = random.choice(regiones_disponibles)
+                                    
+                                    # Generar características étnicas diversas
+                                    caracteristicas = generar_caracteristicas_etnicas_diversas(nacionalidad, genero, edad_aleatoria, region)
+                                    
+                                    # Generar prompt estricto con diversidad étnica MEJORADA
+                                    prompt_parts = [
+                                        f"{nacionalidad} {genero}",
+                                        f"{edad_aleatoria} years old",
+                                        f"from {caracteristicas['region']} region",
+                                        f"{caracteristicas['skin_tone']} skin",
+                                        f"{caracteristicas['skin_texture']} skin texture",
+                                        f"{caracteristicas['hair_color']} hair",
+                                        f"{caracteristicas['hair_style']} hair",
+                                        f"{caracteristicas['eye_color']} eyes",
+                                        f"{caracteristicas['eye_shape']} eyes",
+                                        f"{caracteristicas['face_shape']} face",
+                                        f"{caracteristicas['nose_shape']} nose",
+                                        f"{caracteristicas['lip_shape']} lips",
+                                        f"{caracteristicas['eyebrows']} eyebrows",
+                                        f"{caracteristicas['jawline']} jawline",
+                                        f"{caracteristicas['cheekbones']} cheekbones",
+                                        f"{caracteristicas['facial_hair']}" if caracteristicas['facial_hair'] != "none" else "",
+                                        f"{caracteristicas['freckles']} freckles" if caracteristicas['freckles'] != "none" else "",
+                                        "official passport photo",
+                                        "government ID photo",
+                                        "document photo",
+                                        "official headshot",
+                                        "passport style photo",
+                                        "ID card photo",
+                                        "looking directly at camera",
+                                        "facing camera directly",
+                                        "front view only",
+                                        "head and shoulders only",
+                                        "head centered perfectly",
+                                        "face centered perfectly",
+                                        "neutral expression",
+                                        "serious expression",
+                                        "no smile",
+                                        "mouth closed",
+                                        "eyes open",
+                                        "looking straight ahead",
+                                        "head straight",
+                                        "no head tilt",
+                                        "no head turn",
+                                        "head upright",
+                                        "shoulders visible",
+                                        "shoulders straight",
+                                        "shoulders level",
+                                        "hair behind ears",
+                                        "hair not covering face",
+                                        "hair not covering shoulders",
+                                        "hair neat and tidy",
+                                        "hair professional style",
+                                        "raw photography",
+                                        "documentary style",
+                                        "unretouched",
+                                        "natural skin texture",
+                                        "pores visible",
+                                        "natural skin imperfections",
+                                        "authentic appearance",
+                                        "natural lighting",
+                                        "centered composition",
+                                        "symmetrical positioning",
+                                        "proper framing",
+                                        "correct proportions",
+                                        "head and shoulders framing",
+                                        "passport crop",
+                                        "ID photo crop",
+                                        "official document crop",
+                                        "head centered in frame",
+                                        "shoulders at bottom edge",
+                                        "SAIME Venezuela passport photo",
+                                        "official SAIME specifications",
+                                        "Venezuelan passport requirements",
+                                        "head positioned in upper third of frame",
+                                        "head in upper portion of image",
+                                        "head not touching top edge",
+                                        "small space above head",
+                                        "minimal clearance above head",
+                                        "head well below top border",
+                                        "head centered vertically in upper third",
+                                        "face fills 70% of image height",
+                                        "face occupies most of frame",
+                                        "head takes up most of image",
+                                        "large head in frame",
+                                        "head dominates the image",
+                                        "head and shoulders fill frame",
+                                        "shoulders at bottom of image",
+                                        "shoulders visible at bottom edge",
+                                        "head and shoulders composition",
+                                        "passport photo proportions",
+                                        "ID photo proportions",
+                                        "document photo proportions",
+                                        "official photo proportions",
+                                        "government photo proportions",
+                                        "passport style proportions",
+                                        "ID card proportions",
+                                        "document proportions",
+                                        "official document proportions",
+                                        "government document proportions",
+                                        "tight headshot framing",
+                                        "close-up headshot",
+                                        "head fills most of frame",
+                                        "face centered in upper portion",
+                                        "head positioned in upper 60% of image",
+                                        "eyes positioned at 45% from top",
+                                        "head and shoulders visible",
+                                        "shoulders at bottom edge",
+                                        "head not touching top",
+                                        "head not touching sides",
+                                        "proper head size for passport",
+                                        "correct head proportions",
+                                        "head size appropriate for ID",
+                                        "head size suitable for document",
+                                        "head size perfect for passport",
+                                        "head size ideal for ID card",
+                                        "head size optimal for document",
+                                        "head size correct for official photo",
+                                        "head size proper for government ID",
+                                        "shoulders not touching sides",
+                                        "shoulders not touching bottom",
+                                        "clavicle junction visible",
+                                        "clavicle connection visible",
+                                        "shoulder joint visible",
+                                        "shoulder connection visible",
+                                        "proper head size",
+                                        "correct head size",
+                                        "head not too large",
+                                        "head not too small",
+                                        "head proportional",
+                                        "head well proportioned",
+                                        "head properly sized",
+                                        "head correctly sized",
+                                        "head appropriately sized",
+                                        "head optimally sized",
+                                        "head perfectly sized",
+                                        "head ideally sized",
+                                        "high quality",
+                                        "high resolution",
+                                        "sharp focus",
+                                        "crystal clear",
+                                        "detailed",
+                                        "crisp",
+                                        "clean",
+                                        "professional quality",
+                                        "studio quality",
+                                        "photographic quality",
+                                        "color photography",
+                                        "full color",
+                                        "vibrant colors",
+                                        "natural colors",
+                                        "accurate colors",
+                                        "true colors",
+                                        "rich colors",
+                                        "saturated colors",
+                                        "colorful",
+                                        "color image",
+                                        "color photo",
+                                        "color photograph",
+                                        "color portrait",
+                                        "color headshot",
+                                        "color passport photo",
+                                        "color ID photo",
+                                        "color document photo",
+                                        "color official photo",
+                                        "color government photo",
+                                        "color passport",
+                                        "color ID",
+                                        "color document",
+                                        "color official",
+                                        "color government",
+                                        "everyday person",
+                                        "normal person",
+                                        "regular person",
+                                        "common person",
+                                        "average person",
+                                        "real person",
+                                        "authentic person",
+                                        "natural person",
+                                        "ordinary person",
+                                        "typical person",
+                                        "pure white background",
+                                        "solid white background",
+                                        "clean white background",
+                                        "uniform white background",
+                                        "plain white background",
+                                        "studio white background"
+                                    ]
+                                    
+                                    # Filtrar elementos vacíos
+                                    prompt_parts = [part for part in prompt_parts if part.strip()]
+                                    
+                                    prompt = ", ".join(prompt_parts)
+                                    
+                                    negative_prompt = ", ".join([
+                                        "3/4 view",
+                                        "side profile",
+                                        "profile view",
+                                        "looking away",
+                                        "looking left",
+                                        "looking right",
+                                        "looking up",
+                                        "looking down",
+                                        "tilted head",
+                                        "turned head",
+                                        "angled face",
+                                        "off-center",
+                                        "asymmetrical",
+                                        "smiling",
+                                        "laughing",
+                                        "frowning",
+                                        "head tilted",
+                                        "head turned",
+                                        "head angled",
+                                        "head not straight",
+                                        "head not centered",
+                                        "face not centered",
+                                        "face not straight",
+                                        "face angled",
+                                        "face tilted",
+                                        "face turned",
+                                        "shoulders not visible",
+                                        "shoulders not straight",
+                                        "shoulders tilted",
+                                        "shoulders angled",
+                                        "hair covering face",
+                                        "hair covering eyes",
+                                        "hair covering ears",
+                                        "hair covering shoulders",
+                                        "hair messy",
+                                        "hair unkempt",
+                                        "hair not neat",
+                                        "hair not professional",
+                                        "hair in face",
+                                        "hair over eyes",
+                                        "hair over ears",
+                                        "hair over shoulders",
+                                        "long hair covering",
+                                        "hair blocking face",
+                                        "hair blocking eyes",
+                                        "hair blocking ears",
+                                        "hair blocking shoulders",
+                                        "improper framing",
+                                        "wrong proportions",
+                                        "incorrect framing",
+                                        "bad composition",
+                                        "poor framing",
+                                        "wrong crop",
+                                        "incorrect crop",
+                                        "bad crop",
+                                        "too close",
+                                        "too far",
+                                        "wrong distance",
+                                        "incorrect distance",
+                                        "bad distance",
+                                        "head too large",
+                                        "head too small",
+                                        "head too close",
+                                        "head too far",
+                                        "head touching top",
+                                        "head touching edges",
+                                        "head touching sides",
+                                        "head touching bottom",
+                                        "shoulders touching sides",
+                                        "shoulders touching bottom",
+                                        "shoulders touching edges",
+                                        "no space above head",
+                                        "insufficient space above head",
+                                        "too little space above head",
+                                        "head filling frame",
+                                        "head filling top",
+                                        "head filling edges",
+                                        "head filling sides",
+                                        "head filling bottom",
+                                        "head at top of image",
+                                        "head near top edge",
+                                        "head close to top",
+                                        "head touching top border",
+                                        "head touching top margin",
+                                        "head too high in frame",
+                                        "head positioned too high",
+                                        "head not centered vertically",
+                                        "head not in upper third",
+                                        "head not in upper portion",
+                                        "head too high in frame",
+                                        "head at top of image",
+                                        "head touching top edge",
+                                        "head filling top of frame",
+                                        "head too small in frame",
+                                        "head too far from camera",
+                                        "head not filling frame",
+                                        "head not dominating image",
+                                        "face too small",
+                                        "face not filling frame",
+                                        "head not centered vertically",
+                                        "head not in upper third",
+                                        "head positioned too low",
+                                        "head in middle of frame",
+                                        "head in lower portion",
+                                        "head not in upper portion",
+                                        "shoulders not visible",
+                                        "shoulders cut off",
+                                        "shoulders missing",
+                                        "head only visible",
+                                        "no shoulders",
+                                        "shoulders not at bottom",
+                                        "wrong proportions",
+                                        "incorrect proportions",
+                                        "bad proportions",
+                                        "poor proportions",
+                                        "wrong composition",
+                                        "incorrect composition",
+                                        "bad composition",
+                                        "poor composition",
+                                        "head too large for frame",
+                                        "head too small for frame",
+                                        "head not appropriate size",
+                                        "head size incorrect for passport",
+                                        "head size wrong for ID",
+                                        "head size inappropriate for document",
+                                        "head size not suitable for passport",
+                                        "head size not ideal for ID card",
+                                        "head size not optimal for document",
+                                        "head size not correct for official photo",
+                                        "head size not proper for government ID",
+                                        "head touching top edge",
+                                        "head touching sides",
+                                        "head touching bottom",
+                                        "head filling entire frame",
+                                        "head too close to edges",
+                                        "head too close to top",
+                                        "head too close to sides",
+                                        "head too close to bottom",
+                                        "insufficient space around head",
+                                        "no space around head",
+                                        "head filling frame completely",
+                                        "head dominating entire image",
+                                        "head taking up whole frame",
+                                        "shoulders filling frame",
+                                        "shoulders filling sides",
+                                        "shoulders filling bottom",
+                                        "shoulders filling edges",
+                                        "clavicle not visible",
+                                        "clavicle junction not visible",
+                                        "clavicle connection not visible",
+                                        "shoulder joint not visible",
+                                        "shoulder connection not visible",
+                                        "improper head size",
+                                        "incorrect head size",
+                                        "wrong head size",
+                                        "bad head size",
+                                        "head not proportional",
+                                        "head not well proportioned",
+                                        "head not properly sized",
+                                        "head not correctly sized",
+                                        "head not appropriately sized",
+                                        "head not optimally sized",
+                                        "head not perfectly sized",
+                                        "head not ideally sized",
+                                        "low quality",
+                                        "low resolution",
+                                        "blurry",
+                                        "fuzzy",
+                                        "unclear",
+                                        "unfocused",
+                                        "soft focus",
+                                        "out of focus",
+                                        "poor quality",
+                                        "bad quality",
+                                        "amateur quality",
+                                        "grainy",
+                                        "noisy",
+                                        "pixelated",
+                                        "compressed",
+                                        "artifacts",
+                                        "distorted",
+                                        "deformed",
+                                        "black and white",
+                                        "bw",
+                                        "monochrome",
+                                        "grayscale",
+                                        "sepia",
+                                        "vintage",
+                                        "old",
+                                        "aged",
+                                        "faded",
+                                        "washed out",
+                                        "desaturated",
+                                        "muted colors",
+                                        "dull colors",
+                                        "pale colors",
+                                        "weak colors",
+                                        "faded colors",
+                                        "washed out colors",
+                                        "desaturated colors",
+                                        "muted",
+                                        "dull",
+                                        "pale",
+                                        "weak",
+                                        "faded",
+                                        "washed out",
+                                        "desaturated",
+                                        "no color",
+                                        "colorless",
+                                        "achromatic",
+                                        "monochromatic",
+                                        "grayscale",
+                                        "sepia tone",
+                                        "vintage look",
+                                        "old look",
+                                        "aged look",
+                                        "faded look",
+                                        "washed out look",
+                                        "desaturated look",
+                                        "muted look",
+                                        "dull look",
+                                        "pale look",
+                                        "weak look",
+                                        "faded look",
+                                        "washed out look",
+                                        "desaturated look",
+                                        "multiple people",
+                                        "blurry",
+                                        "low quality",
+                                        "distorted",
+                                        "deformed",
+                                        "ugly",
+                                        "bad anatomy",
+                                        "bad proportions",
+                                        "extra limbs",
+                                        "missing limbs",
+                                        "extra fingers",
+                                        "missing fingers",
+                                        "extra arms",
+                                        "missing arms",
+                                        "extra legs",
+                                        "missing legs",
+                                        "extra heads",
+                                        "missing heads",
+                                        "extra eyes",
+                                        "missing eyes",
+                                        "extra nose",
+                                        "missing nose",
+                                        "extra mouth",
+                                        "missing mouth",
+                                        "text",
+                                        "watermark",
+                                        "signature",
+                                        "gradient background",
+                                        "gradient",
+                                        "faded background",
+                                        "textured background",
+                                        "patterned background",
+                                        "noisy background",
+                                        "complex background",
+                                        "busy background",
+                                        "shadows on background",
+                                        "lighting effects on background",
+                                        "colored background",
+                                        "colored backdrop",
+                                        "tinted background",
+                                        "off-white background",
+                                        "cream background",
+                                        "beige background",
+                                        "gray background",
+                                        "light gray background",
+                                        "dark background",
+                                        "black background",
+                                        "blue background",
+                                        "green background",
+                                        "red background",
+                                        "yellow background",
+                                        "purple background",
+                                        "orange background",
+                                        "brown background",
+                                        "wood background",
+                                        "wall background",
+                                        "fabric background",
+                                        "paper background",
+                                        "canvas background",
+                                        "brick background",
+                                        "stone background",
+                                        "metal background",
+                                        "glass background",
+                                        "mirror background",
+                                        "reflection",
+                                        "shadows",
+                                        "lighting",
+                                        "spotlight",
+                                        "soft lighting",
+                                        "dramatic lighting",
+                                        "rim lighting",
+                                        "back lighting",
+                                        "side lighting",
+                                        "top lighting",
+                                        "bottom lighting",
+                                        "ambient lighting",
+                                        "natural lighting",
+                                        "artificial lighting",
+                                        "studio lighting",
+                                        "flash lighting",
+                                        "harsh lighting",
+                                        "dim lighting",
+                                        "bright lighting",
+                                        "overexposed",
+                                        "underexposed",
+                                        "high contrast",
+                                        "low contrast",
+                                        "saturated colors",
+                                        "desaturated colors",
+                                        "vibrant colors",
+                                        "muted colors",
+                                        "warm colors",
+                                        "cool colors",
+                                        "neutral colors",
+                                        "pastel colors",
+                                        "bold colors",
+                                        "subtle colors",
+                                        "airbrushed",
+                                        "photoshopped",
+                                        "retouched",
+                                        "smooth skin",
+                                        "perfect skin",
+                                        "flawless skin",
+                                        "glowing skin",
+                                        "shiny skin",
+                                        "oily skin",
+                                        "greasy skin",
+                                        "plastic skin",
+                                        "artificial skin",
+                                        "digital art",
+                                        "3d render",
+                                        "cg",
+                                        "computer generated",
+                                        "synthetic",
+                                        "fake",
+                                        "artificial",
+                                        "overexposed",
+                                        "bright lighting",
+                                        "studio lighting",
+                                        "flash photography",
+                                        "harsh lighting",
+                                        "dramatic lighting",
+                                        "cinematic lighting",
+                                        "professional lighting",
+                                        "perfect lighting",
+                                        "ideal lighting",
+                                        "enhanced",
+                                        "improved",
+                                        "perfected",
+                                        "beautified",
+                                        "glamorized",
+                                        "stylized",
+                                        "artistic",
+                                        "aesthetic",
+                                        "beautiful",
+                                        "attractive",
+                                        "handsome",
+                                        "pretty",
+                                        "gorgeous",
+                                        "stunning",
+                                        "perfect",
+                                        "ideal",
+                                        "flawless",
+                                        "immaculate",
+                                        "pristine",
+                                        "clean",
+                                        "pure",
+                                        "crystal clear",
+                                        "sharp",
+                                        "crisp",
+                                        "vibrant",
+                                        "saturated",
+                                        "colorful",
+                                        "bright",
+                                        "luminous",
+                                        "radiant",
+                                        "brilliant",
+                                        "sparkling",
+                                        "shining",
+                                        "glowing",
+                                        "glossy",
+                                        "polished",
+                                        "refined",
+                                        "elegant",
+                                        "sophisticated",
+                                        "luxurious",
+                                        "premium",
+                                        "high-end",
+                                        "professional",
+                                        "commercial",
+                                        "advertising",
+                                        "marketing",
+                                        "fashion",
+                                        "beauty",
+                                        "cosmetic",
+                                        "makeup",
+                                        "foundation",
+                                        "concealer",
+                                        "powder",
+                                        "blush",
+                                        "lipstick",
+                                        "mascara",
+                                        "eyeliner",
+                                        "eyeshadow",
+                                        "contouring",
+                                        "highlighting",
+                                        "bronzer",
+                                        "primer",
+                                        "setting spray",
+                                        "finishing powder",
+                                        "model look",
+                                        "supermodel appearance",
+                                        "celebrity look",
+                                        "fashion model",
+                                        "beauty model",
+                                        "perfect face",
+                                        "flawless face",
+                                        "ideal face",
+                                        "beautiful face",
+                                        "attractive face",
+                                        "handsome face",
+                                        "pretty face",
+                                        "gorgeous face",
+                                        "stunning face",
+                                        "perfect features",
+                                        "flawless features",
+                                        "ideal features",
+                                        "beautiful features",
+                                        "attractive features",
+                                        "handsome features",
+                                        "pretty features",
+                                        "gorgeous features",
+                                        "stunning features"
+                                    ])
+                                    
+                                    # Crear JSON dinámico único para esta imagen
+                                    json_dinamico = {
+                                        "image_id": f"{nacionalidad}_{genero}_{i+1}_{timestamp}",
+                                        "generated_at": datetime.now().isoformat(),
+                                        "metadata": {
+                                            "nationality": nacionalidad,
+                                            "gender": genero,
+                                            "age": edad_aleatoria,
+                                            "region": caracteristicas.get("region", region),
+                                            "generation_type": "dynamic_ethnic_diversity",
+                                            "unique_characteristics": True
+                                        },
+                                        "ethnic_characteristics": caracteristicas,
+                                        "prompt": prompt,
+                                        "negative_prompt": negative_prompt,
+                                        "generation_parameters": {
+                                            "width": 512,
+                                            "height": 512,
+                                            "steps": 35,
+                                            "cfg_scale": 12.0,
+                                            "sampler_name": "DPM++ 2M Karras",
+                                            "seed": random.randint(1, 2147483647),  # Seed único para cada imagen
+                                            "batch_size": 1,
+                                            "n_iter": 1
+                                        },
+                                        "replication_info": {
+                                            "description": "Configuración única para replicar esta imagen exacta",
+                                            "ethnic_diversity": "Real basada en datos demográficos",
+                                            "uniqueness": "Cada imagen tiene características étnicas únicas"
+                                        }
+                                    }
+                                    
+                                except Exception as e:
+                                    print(f"⚠️ Error generando características dinámicas: {e}")
+                                    # Fallback: usar prompt básico
+                                    prompt = f"{nacionalidad} passport photo, {genero}, {edad_int} years old, professional headshot, white background"
+                                    negative_prompt = "3/4 view, side profile, looking away, smiling, multiple people"
+                                    
+                                    json_dinamico = {
+                                        "image_id": f"{nacionalidad}_{genero}_{i+1}_{timestamp}",
+                                        "generated_at": datetime.now().isoformat(),
+                                        "metadata": {
+                                            "nationality": nacionalidad,
+                                            "gender": genero,
+                                            "age": edad_int,
+                                            "generation_type": "fallback_basic",
+                                            "unique_characteristics": False
+                                        },
+                                        "prompt": prompt,
+                                        "negative_prompt": negative_prompt,
+                                        "generation_parameters": {
+                                            "width": 512,
+                                            "height": 512,
+                                            "steps": 35,
+                                            "cfg_scale": 12.0,
+                                            "sampler_name": "DPM++ 2M Karras",
+                                            "seed": random.randint(1, 2147483647),  # Seed único para cada imagen
+                                            "batch_size": 1,
+                                            "n_iter": 1
+                                        }
+                                    }
+                                
+                                # Parámetros homogéneos
+                                params = {
+                                    'prompt': prompt,
+                                    'negative_prompt': negative_prompt,
+                                    'width': width,
+                                    'height': height,
+                                    'steps': steps,
+                                    'cfg_scale': cfg_scale,
+                                    'sampler_name': sampler_name,
+                                    'seed': seed,
+                                    'batch_size': batch_size,
+                                    'n_iter': batch_count
+                                }
+                                
+                                # Generar imagen usando la API interna de WebUI
+                                try:
+                                    import modules.processing
+                                    import modules.shared as shared
+                                    from modules.shared import opts
+                                    from contextlib import closing
+                                    
+                                    # Crear objeto de procesamiento
+                                    p = modules.processing.StableDiffusionProcessingTxt2Img(
+                                        sd_model=shared.sd_model,
+                                        outpath_samples=str(standard_webui_dir),  # Usar carpeta webui_standard para nomenclatura 00000-xxx
+                                        outpath_grids=None,   # No guardar grids
+                                        prompt=params['prompt'],
+                                        negative_prompt=params['negative_prompt'],
+                                        batch_size=params['batch_size'],
+                                        n_iter=params['n_iter'],
+                                        cfg_scale=params['cfg_scale'],
+                                        width=params['width'],
+                                        height=params['height'],
+                                        enable_hr=hr_second_pass_steps > 0,
+                                        denoising_strength=denoising_strength,
+                                        hr_scale=hr_scale,
+                                        hr_upscaler=hr_upscaler,
+                                        hr_second_pass_steps=hr_second_pass_steps,
+                                        hr_resize_x=hr_resize_x,
+                                        hr_resize_y=hr_resize_y,
+                                        hr_checkpoint_name=hr_checkpoint_name,
+                                        hr_sampler_name=hr_sampler_name,
+                                        hr_scheduler=hr_scheduler,
+                                        hr_prompt="",
+                                        hr_negative_prompt="",
+                                        override_settings={
+                                            'save_to_dirs': False,  # No crear subcarpetas con fechas
+                                            'save_images_replace_action': "Add number suffix"
+                                        }
+                                    )
+                                    
+                                    # Configurar sampler
+                                    from modules import sd_samplers
+                                    # Configurar sampler
+                                    try:
+                                        sampler = sd_samplers.samplers_map.get(params['sampler_name'])
+                                        if sampler is None:
+                                            # Fallback al primer sampler disponible
+                                            sampler = list(sd_samplers.samplers_map.values())[0]
+                                        p.sampler = sampler
+                                    except Exception as e:
+                                        print(f"⚠️ Error configurando sampler: {e}")
+                                        # Usar sampler por defecto
+                                        p.sampler = list(sd_samplers.samplers_map.values())[0]
+                                    
+                                    # Configurar steps
+                                    p.steps = params['steps']
+                                    
+                                    # Configurar seed
+                                    if params['seed'] != -1:
+                                        p.seed = params['seed']
+                                    
+                                    # Procesar imagen
+                                    with closing(p):
+                                        processed = modules.processing.process_images(p)
+                                    
+                                    result = processed.images if processed else []
+                                    
+                                    # Debug: Imprimir información del resultado
+                                    print(f"🔍 Debug Masivo - processed: {processed}")
+                                    print(f"🔍 Debug Masivo - result: {result}")
+                                    print(f"🔍 Debug Masivo - len(result): {len(result) if result else 0}")
+                                    if result and len(result) > 0:
+                                        print(f"🔍 Debug Masivo - result[0]: {result[0]}")
+                                        print(f"🔍 Debug Masivo - result[0] type: {type(result[0])}")
+                                        print(f"🔍 Debug Masivo - hasattr(result[0], 'save'): {hasattr(result[0], 'save')}")
+                                    
+                                    if result and len(result) > 0 and result[0] is not None:
+                                        # Guardar imagen con nomenclatura correcta
+                                        filename = f"massive_{nacionalidad}_{genero}_{edad_aleatoria}_{i+1}_{timestamp}.png"
+                                        filepath = batch_dir / filename
+                                        
+                                        # Debug: Imprimir información de la ruta
+                                        print(f"🔍 Debug Masivo - batch_dir: {batch_dir}")
+                                        print(f"🔍 Debug Masivo - filename: {filename}")
+                                        print(f"🔍 Debug Masivo - filepath: {filepath}")
+                                        print(f"🔍 Debug Masivo - filepath type: {type(filepath)}")
+                                        print(f"🔍 Debug Masivo - str(filepath): {str(filepath)}")
+                                        
+                                        # Verificar que la ruta sea válida
+                                        if filepath and str(filepath):
+                                            # Guardar la imagen PIL
+                                            if hasattr(result[0], 'save'):
+                                                result[0].save(str(filepath))
+                                            else:
+                                                # Si es una ruta de archivo
+                                                import shutil
+                                                shutil.copy2(result[0], str(filepath))
+                                        else:
+                                            print(f"⚠️ Error: Ruta de archivo inválida: {filepath}")
+                                            failed_count += 1
+                                            continue
+                                        
+                                        # Guardar configuración JSON dinámica
+                                        json_filename = filename.replace('.png', '.json')
+                                        json_filepath = batch_dir / json_filename
+                                        
+                                        # Verificar que la ruta del JSON sea válida
+                                        if json_filepath and str(json_filepath):
+                                            # Agregar información de la imagen generada al JSON dinámico
+                                            json_dinamico["image_info"] = {
+                                                "filename": filename,
+                                                "filepath": str(filepath),
+                                                "generation_successful": True,
+                                                "generation_time": datetime.now().isoformat()
+                                            }
+                                            
+                                            with open(str(json_filepath), 'w', encoding='utf-8') as f:
+                                                json.dump(json_dinamico, f, indent=2, ensure_ascii=False)
+                                            
+                                            generated_count += 1
+                                            print(f"✅ Imagen {i+1} generada: {filename}")
+                                        else:
+                                            print(f"⚠️ Error: Ruta de JSON inválida: {json_filepath}")
+                                            failed_count += 1
+                                            continue
+                                    else:
+                                        failed_count += 1
+                                        print(f"❌ Error generando imagen {i+1}")
+                                        
+                                except Exception as e:
+                                    failed_count += 1
+                                    print(f"❌ Error en generación {i+1}: {e}")
+                                    print(f"🔍 Debug - Tipo de error: {type(e)}")
+                                    print(f"🔍 Debug - Traceback completo:")
+                                    import traceback
+                                    traceback.print_exc()
+                            
+                            except Exception as e:
+                                failed_count += 1
+                                print(f"❌ Error procesando imagen {i+1}: {e}")
+                        
+                        # Resultado final
+                        progress(1.0, desc="Generación completada")
+                        
+                        resultado = f"✅ **Generación masiva con JSONs dinámicos completada**\n\n"
+                        resultado += f"📊 **Estadísticas finales:**\n"
+                        resultado += f"- Imágenes generadas: {generated_count}\n"
+                        resultado += f"- Imágenes fallidas: {failed_count}\n"
+                        resultado += f"- Total procesadas: {cantidad_int}\n"
+                        resultado += f"- Modelo utilizado: {model_name_clean}\n"
+                        resultado += f"- Directorio: {batch_dir}\n\n"
+                        resultado += f"🎯 **Características implementadas:**\n"
+                        resultado += f"- ✅ **JSONs dinámicos únicos** para cada imagen\n"
+                        resultado += f"- ✅ **Diversidad étnica real** basada en datos demográficos\n"
+                        resultado += f"- ✅ **Características únicas** por imagen\n"
+                        resultado += f"- ✅ **Edades variables** dentro del rango especificado\n"
+                        resultado += f"- ✅ **Prompts únicos** generados dinámicamente\n"
+                        resultado += f"- ✅ **Parámetros homogéneos** (512x512, CFG 9.0)\n"
+                        resultado += f"- ✅ **Barra de progreso** en tiempo real\n"
+                        resultado += f"- ✅ **Configuración JSON completa** por imagen\n\n"
+                        resultado += f"🌟 **Diversidad étnica implementada:**\n"
+                        resultado += f"- Tonos de piel variables según demografía real\n"
+                        resultado += f"- Colores de pelo y ojos diversos\n"
+                        resultado += f"- Estructuras faciales variadas\n"
+                        resultado += f"- Características étnicas auténticas\n\n"
+                        resultado += f"📁 **Archivos generados en**: {batch_dir}\n"
+                        resultado += f"🎉 **¡Generación masiva con diversidad étnica completada!**\n"
+                        
+                        return "", "", 1, 1, resultado
+                        
+                    except Exception as e:
+                        return "", "", 1, 1, f"❌ Error: {e}"
+                
+                def instrucciones_masivas_func(nacionalidad, genero, edad, cantidad):
+                    """Muestra instrucciones detalladas para generación masiva."""
+                    try:
+                        import time
+                        import random
+                        from datetime import datetime
+                        
+                        directorio = "outputs/pasaportes_masivos"
+                        Path(directorio).mkdir(parents=True, exist_ok=True)
+                        
+                        # Convertir valores a enteros
+                        cantidad_int = int(cantidad)
+                        edad_int = int(edad)
+                        
+                        resultado = f"📋 **Instrucciones para generación masiva de {nacionalidad}**\n\n"
+                        # Obtener parámetros homogéneos
+                        parametros = obtener_parametros_nacionalidad(nacionalidad)
+                        
+                        resultado += f"💡 **Proceso paso a paso:**\n"
+                        resultado += f"1. Haz clic en '📝 Aplicar Prompt de Pasaporte' para cargar el prompt\n"
+                        resultado += f"2. Ajusta la cantidad en 'Batch count' a {cantidad_int}\n"
+                        resultado += f"3. Haz clic en 'Generate' para crear {cantidad_int} imágenes\n"
+                        resultado += f"4. Las imágenes se guardarán en: outputs/txt2img-images/\n"
+                        resultado += f"5. Usa '📁 Abrir Carpeta de Imágenes' para verlas\n\n"
+                        resultado += f"🎯 **Parámetros homogéneos aplicados:**\n"
+                        resultado += f"- Resolución: {parametros['width']}x{parametros['height']} (HOMOGÉNEO)\n"
+                        resultado += f"- CFG Scale: {parametros['cfg_scale']} (ALTO para seguir instrucciones)\n"
+                        resultado += f"- Steps: {parametros['steps']}\n"
+                        resultado += f"- Sampler: {parametros['sampler']}\n\n"
+                        
+                        # Generar prompts de ejemplo
+                        from generar_pasaportes import GeneradorPasaportes
+                        consulta_dir = Path(__file__).parent.parent / "Consulta"
+                        generador = GeneradorPasaportes(str(consulta_dir))
+                        
+                        resultado += f"📋 **Prompts generados para {nacionalidad}:**\n"
+                        for i in range(min(3, cantidad_int)):  # Mostrar máximo 3 ejemplos
+                            edad_aleatoria = random.randint(18, 80)  # Usar rango completo para ejemplos
+                            prompt_pos, prompt_neg = generador.generar_prompt_completo(nacionalidad, genero, edad_aleatoria, edad_aleatoria)
+                            resultado += f"\n**Ejemplo {i+1} (edad {edad_aleatoria}):**\n"
+                            resultado += f"Prompt: {prompt_pos[:100]}...\n"
+                            resultado += f"Negativo: {prompt_neg[:50]}...\n"
+                        
+                        if cantidad_int > 3:
+                            resultado += f"\n... y {cantidad_int - 3} prompts más\n"
+                        
+                        resultado += f"\n📁 **Guardado en**: outputs/txt2img-images/\n"
+                        resultado += f"📋 **Formato**: [timestamp]-[seed].png"
+                        
+                        return resultado
+                    except Exception as e:
+                        return f"❌ Error general: {e}"
+                
+                def abrir_carpeta_imagenes_func():
+                    """Abre la carpeta donde se guardan las imágenes individuales."""
+                    try:
+                        import subprocess
+                        import os
+                        from datetime import datetime
+                        
+                        # Obtener la fecha actual
+                        fecha_actual = datetime.now().strftime("%Y-%m-%d")
+                        carpeta_imagenes = f"outputs/txt2img-images/{fecha_actual}"
+                        
+                        # Crear la carpeta si no existe
+                        Path(carpeta_imagenes).mkdir(parents=True, exist_ok=True)
+                        
+                        # Abrir la carpeta según el sistema operativo
+                        if os.name == 'nt':  # Windows
+                            os.startfile(carpeta_imagenes)
+                        elif os.name == 'posix':  # macOS y Linux
+                            subprocess.run(['xdg-open', carpeta_imagenes])
+                        
+                        return f"📁 **Carpeta abierta**: {carpeta_imagenes}\n\n💡 **Ubicación completa**: {os.path.abspath(carpeta_imagenes)}"
+                    except Exception as e:
+                        return f"❌ Error al abrir carpeta: {e}"
+                
+                def abrir_carpeta_masivos_func():
+                    """Abre la carpeta donde se guardan las imágenes masivas."""
+                    try:
+                        import subprocess
+                        import os
+                        
+                        carpeta_masivos = "outputs/pasaportes_masivos"
+                        
+                        # Crear la carpeta si no existe
+                        Path(carpeta_masivos).mkdir(parents=True, exist_ok=True)
+                        
+                        # Abrir la carpeta según el sistema operativo
+                        if os.name == 'nt':  # Windows
+                            os.startfile(carpeta_masivos)
+                        elif os.name == 'posix':  # macOS y Linux
+                            subprocess.run(['xdg-open', carpeta_masivos])
+                        
+                        return f"📂 **Carpeta abierta**: {carpeta_masivos}\n\n💡 **Ubicación completa**: {os.path.abspath(carpeta_masivos)}"
+                    except Exception as e:
+                        return f"❌ Error al abrir carpeta: {e}"
+                
+                def ver_progreso_masivo_func():
+                    """Muestra el progreso de la generación masiva."""
+                    try:
+                        import os
+                        from datetime import datetime
+                        
+                        carpeta_masivos = "outputs/pasaportes_masivos"
+                        
+                        if not os.path.exists(carpeta_masivos):
+                            return "📊 **No hay generaciones masivas aún**\n\n💡 **Haz clic en '⚡ Generar Masivo Básico' para comenzar**"
+                        
+                        # Buscar carpetas de lotes
+                        lotes = []
+                        for item in os.listdir(carpeta_masivos):
+                            item_path = os.path.join(carpeta_masivos, item)
+                            if os.path.isdir(item_path) and item.startswith("batch_"):
+                                lotes.append(item)
+                        
+                        if not lotes:
+                            return "📊 **No hay lotes de generación masiva**\n\n💡 **Haz clic en '⚡ Generar Masivo Básico' para comenzar**"
+                        
+                        # Ordenar por fecha (más reciente primero)
+                        lotes.sort(reverse=True)
+                        
+                        resultado = f"📊 **Progreso de Generación Masiva**\n\n"
+                        resultado += f"📁 **Lotes encontrados**: {len(lotes)}\n\n"
+                        
+                        # Mostrar los últimos 5 lotes
+                        for i, lote in enumerate(lotes[:5]):
+                            lote_path = os.path.join(carpeta_masivos, lote)
+                            
+                            # Contar archivos en el lote
+                            try:
+                                archivos = os.listdir(lote_path)
+                                png_files = [f for f in archivos if f.endswith('.png')]
+                                json_files = [f for f in archivos if f.endswith('.json')]
+                                
+                                # Obtener fecha de modificación
+                                mod_time = os.path.getmtime(lote_path)
+                                fecha = datetime.fromtimestamp(mod_time).strftime("%Y-%m-%d %H:%M:%S")
+                                
+                                resultado += f"**Lote {i+1}**: `{lote}`\n"
+                                resultado += f"- 📅 Fecha: {fecha}\n"
+                                resultado += f"- 🖼️ Imágenes: {len(png_files)}\n"
+                                resultado += f"- 📄 Configuraciones: {len(json_files)}\n"
+                                resultado += f"- 📁 Ruta: `{lote_path}`\n\n"
+                                
+                            except Exception as e:
+                                resultado += f"**Lote {i+1}**: `{lote}` (Error: {e})\n\n"
+                        
+                        if len(lotes) > 5:
+                            resultado += f"... y {len(lotes) - 5} lotes más\n\n"
+                        
+                        resultado += f"💡 **Para ver el progreso en tiempo real, consulta la consola de WebUI**\n"
+                        resultado += f"📁 **Ubicación**: {os.path.abspath(carpeta_masivos)}"
+                        
+                        return resultado
+                        
+                    except Exception as e:
+                        return f"❌ Error obteniendo progreso: {e}"
+                
+                def verificar_modelo_actual_func():
+                    """Verifica el modelo actual en WebUI y muestra información detallada."""
+                    try:
+                        import sys
+                        
+                        # Intentar obtener información del modelo actual
+                        model_info = {
+                            "model_name": "Unknown",
+                            "model_title": "Unknown",
+                            "model_filename": "Unknown",
+                            "model_hash": "Unknown",
+                            "model_type": "Unknown",
+                            "is_sdxl": False,
+                            "is_sd1": False,
+                            "is_sd2": False,
+                            "is_sd3": False
+                        }
+                        
+                        if 'modules' in sys.modules:
+                            try:
+                                from modules import shared, sd_models
+                                
+                                # Obtener modelo actual
+                                current_model = shared.sd_model
+                                if current_model and hasattr(current_model, 'sd_checkpoint_info'):
+                                    checkpoint_info = current_model.sd_checkpoint_info
+                                    model_info = {
+                                        "model_name": checkpoint_info.name_for_extra,
+                                        "model_title": checkpoint_info.title,
+                                        "model_filename": checkpoint_info.filename,
+                                        "model_hash": getattr(current_model, 'sd_model_hash', 'unknown'),
+                                        "model_type": "Stable Diffusion",
+                                        "is_sdxl": getattr(current_model, 'is_sdxl', False),
+                                        "is_sd1": getattr(current_model, 'is_sd1', False),
+                                        "is_sd2": getattr(current_model, 'is_sd2', False),
+                                        "is_sd3": getattr(current_model, 'is_sd3', False)
+                                    }
+                                else:
+                                    # Fallback: obtener desde configuración
+                                    selected_model = shared.opts.sd_model_checkpoint
+                                    if selected_model:
+                                        model_info = {
+                                            "model_name": selected_model,
+                                            "model_title": selected_model,
+                                            "model_filename": "unknown",
+                                            "model_hash": "unknown",
+                                            "model_type": "Stable Diffusion",
+                                            "is_sdxl": False,
+                                            "is_sd1": True,
+                                            "is_sd2": False,
+                                            "is_sd3": False
+                                        }
+                            except Exception as e:
+                                model_info["error"] = str(e)
+                        
+                        # Crear resultado
+                        resultado = f"🔍 **Verificación del Modelo Actual**\n\n"
+                        resultado += f"📋 **Información del Modelo:**\n"
+                        resultado += f"- **Nombre**: {model_info['model_name']}\n"
+                        resultado += f"- **Título**: {model_info['model_title']}\n"
+                        resultado += f"- **Archivo**: {model_info['model_filename']}\n"
+                        resultado += f"- **Hash**: {model_info['model_hash']}\n"
+                        resultado += f"- **Tipo**: {model_info['model_type']}\n\n"
+                        
+                        resultado += f"🏗️ **Arquitectura del Modelo:**\n"
+                        resultado += f"- **SDXL**: {'✅ Sí' if model_info['is_sdxl'] else '❌ No'}\n"
+                        resultado += f"- **SD 1.x**: {'✅ Sí' if model_info['is_sd1'] else '❌ No'}\n"
+                        resultado += f"- **SD 2.x**: {'✅ Sí' if model_info['is_sd2'] else '❌ No'}\n"
+                        resultado += f"- **SD 3.x**: {'✅ Sí' if model_info['is_sd3'] else '❌ No'}\n\n"
+                        
+                        if 'error' in model_info:
+                            resultado += f"⚠️ **Error**: {model_info['error']}\n\n"
+                        
+                        resultado += f"💡 **Verificación de Coincidencia:**\n"
+                        resultado += f"- ✅ **Modelo cargado**: {model_info['model_name']}\n"
+                        resultado += f"- ✅ **Modelo seleccionado**: {model_info['model_title']}\n"
+                        resultado += f"- ✅ **Estado**: {'Coincide' if model_info['model_name'] == model_info['model_title'] else 'No coincide'}\n\n"
+                        
+                        resultado += f"📝 **Nota**: Este es el modelo que se utilizará para generar las imágenes de pasaportes.\n"
+                        resultado += f"🔧 **Para cambiar el modelo**: Ve a la pestaña 'Settings' y cambia 'Stable Diffusion checkpoint'."
+                        
+                        return resultado
+                        
+                    except Exception as e:
+                        return f"❌ Error verificando modelo: {e}"
+
+            # Controles de Pasaportes Venezolanos - Fuera del bucle de categorías para posición fija
+            # ===== SECCIÓN 1: CONFIGURACIÓN BÁSICA =====
+            with gr.Accordion("🌍 Configuración Básica", open=True, elem_id="config_basica_accordion"):
+                # Cargar nacionalidades disponibles
+                try:
+                    from generar_pasaportes import GeneradorPasaportes
+                    consulta_dir = Path(__file__).parent.parent / "Consulta"
+                    if consulta_dir.exists():
+                        generador_pasaportes = GeneradorPasaportes(str(consulta_dir))
+                        nacionalidades_pasaportes = list(generador_pasaportes.datos_etnicos.keys())
+                    else:
+                        nacionalidades_pasaportes = ["venezuelan", "cuban", "haitian"]
+                except:
+                    nacionalidades_pasaportes = ["venezuelan", "cuban", "haitian"]
+                
+                with gr.Accordion("🌍 Nacionalidad Avanzada", open=True, elem_id="nacionalidad_avanzada_accordion", elem_classes=["pasaportes_accordion"]):
+                    with gr.Row():
+                        nacionalidad_pasaporte = gr.Dropdown(
+                            choices=nacionalidades_pasaportes,
+                            value="venezuelan",
+                            label="🌍 Nacionalidad",
+                            info="Selecciona la nacionalidad para el pasaporte",
+                            elem_id="pasaporte_nacionalidad"
+                        )
+                        
+                        genero_pasaporte = gr.Radio(
+                            choices=["mujer", "hombre"], 
+                            value="mujer",
+                            label="👤 Género",
+                            info="Género de la persona",
+                            elem_id="pasaporte_genero"
+                        )
+                        
+                        edad_pasaporte = gr.Slider(
+                            minimum=18, maximum=80, value=25, step=1,
+                            label="🎂 Edad",
+                            info="Edad de la persona",
+                            elem_id="pasaporte_edad"
+                        )
+                    
+                    with gr.Row():
+                        aplicar_prompt_pasaporte_btn = gr.Button(
+                            "📝 Aplicar Prompt de Pasaporte", 
+                            variant="secondary",
+                            elem_id="aplicar_prompt_pasaporte"
+                        )
+                    
+                    # Sistema de Plantillas integrado
+                    with gr.Row():
+                        with gr.Column(scale=2):
+                            nombre_plantilla = gr.Textbox(
+                                placeholder="Ej: Mi Configuración Pasaporte",
+                                label="💾 Guardar Plantilla",
+                                info="Nombre para la configuración actual",
+                                elem_id="nombre_plantilla",
+                                max_lines=1
+                            )
+                        
+                        with gr.Column(scale=1):
+                            guardar_plantilla_btn = gr.Button(
+                                "💾 Guardar",
+                                variant="primary",
+                                elem_id="guardar_plantilla"
+                            )
+                    
+                    with gr.Row():
+                        with gr.Column(scale=2):
+                            # Inicializar dropdown con plantillas disponibles
+                            plantillas_iniciales = actualizar_dropdown_plantillas()
+                            plantillas_dropdown = gr.Dropdown(
+                                choices=plantillas_iniciales,
+                                label="📂 Cargar Plantilla",
+                                info="Selecciona una plantilla guardada",
+                                elem_id="plantillas_dropdown",
+                                allow_custom_value=False
+                            )
+                        
+                        with gr.Column(scale=1):
+                            cargar_plantilla_btn = gr.Button(
+                                "📂 Cargar",
+                                variant="secondary",
+                                elem_id="cargar_plantilla"
+                            )
+                        
+                        with gr.Column(scale=1):
+                            eliminar_plantilla_btn = gr.Button(
+                                "🗑️ Eliminar",
+                                variant="stop",
+                                elem_id="eliminar_plantilla"
+                            )
+                    
+                    # Información de plantillas
+                    info_plantillas = gr.Markdown(
+                        value="💡 **Sistema de Plantillas**: Guarda y carga configuraciones personalizadas.",
+                        label="Información de Plantillas",
+                        elem_id="info_plantillas"
+                    )
+                    
+                    with gr.Row():
+                        cantidad_masiva_pasaporte = gr.Number(
+                            value=5, minimum=1, maximum=5000, step=1,
+                            label="📊 Cantidad de Imágenes",
+                            info="Número de imágenes a generar (máximo: 5000)",
+                            elem_id="cantidad_masiva_pasaporte"
+                        )
+                    
+                    with gr.Row():
+                        generar_masivo_pasaporte_btn = gr.Button(
+                            "⚡ Generar Masivo Avanzado", 
+                            variant="secondary",
+                            elem_id="generar_masivo_pasaporte"
+                        )
+                        
+                        generar_genetico_btn = gr.Button(
+                            "🎯 Generar Genético Avanzado", 
+                            variant="primary",
+                            elem_id="generar_genetico_pasaporte"
+                        )
+                        
+                        detener_generacion_btn = gr.Button(
+                            "🛑 Detener Generación", 
+                            variant="stop",
+                            elem_id="detener_generacion_pasaporte",
+                            visible=False
+                        )
+                    
+                    with gr.Row():
+                        instrucciones_masivas_btn = gr.Button(
+                            "📋 Instrucciones Masivas", 
+                            variant="secondary",
+                            elem_id="instrucciones_masivas"
+                        )
+                        
+                        ver_progreso_btn = gr.Button(
+                            "📊 Ver Progreso", 
+                            variant="secondary",
+                            elem_id="ver_progreso_masivo"
+                        )
+                        
+                        verificar_modelo_btn = gr.Button(
+                            "🔍 Verificar Modelo", 
+                            variant="secondary",
+                            elem_id="verificar_modelo_actual"
+                        )
+                    
+                    with gr.Row():
+                        abrir_carpeta_btn = gr.Button(
+                            "📁 Abrir Carpeta Imágenes", 
+                            variant="secondary",
+                            elem_id="abrir_carpeta_pasaportes"
+                        )
+                        
+                        abrir_carpeta_masivos_btn = gr.Button(
+                            "📂 Abrir Carpeta Masivos", 
+                            variant="secondary",
+                            elem_id="abrir_carpeta_masivos"
+                        )
+                    
+                    info_pasaporte = gr.Markdown(
+                        value="Selecciona nacionalidad, género y edad, luego haz clic en 'Aplicar Prompt de Pasaporte'",
+                        label="Información",
+                        elem_id="info_pasaporte"
+                    )
+                
+                # ===== CONTROLES GENÉTICOS AVANZADOS =====
+                with gr.Accordion("🧬 Controles Genéticos Avanzados", open=True, elem_id="genetic_controls", elem_classes=["genetic_accordion"]):
+                    # Cargar configuración guardada ANTES de crear los controles
+                    saved_beauty, saved_skin, saved_hair, saved_eye, saved_background, saved_region = cargar_configuracion_genetica()
+                    
+                    with gr.Row():
+                        region_pasaporte = gr.Dropdown(
+                            choices=["aleatorio", "caracas", "maracaibo", "valencia", "barquisimeto", "ciudad_guayana", "maturin", "merida", "san_cristobal", "barcelona", "puerto_la_cruz", "ciudad_bolivar", "tucupita", "porlamar", "valera", "acarigua", "guanare", "san_fernando", "trujillo", "el_tigre", "cabimas", "punto_fijo", "ciudad_ojeda", "puerto_cabello", "valle_de_la_pascua", "san_juan_de_los_morros", "carora", "tocuyo", "duaca", "siquisique", "araure", "turen", "guanarito", "santa_elena", "el_venado", "san_rafael", "san_antonio", "la_fria", "rubio", "colon", "san_cristobal", "tachira", "apure", "amazonas", "delta_amacuro", "yacambu", "lara", "portuguesa", "cojedes", "guarico", "anzoategui", "monagas", "sucre", "nueva_esparta", "falcon", "zulia", "merida", "trujillo", "barinas", "yaracuy", "carabobo", "aragua", "miranda", "vargas", "distrito_capital"],
+                            value="aleatorio",  # SIEMPRE usar región aleatoria para máxima diversidad
+                            label="🏙️ Región",
+                            info="Región específica (aleatorio = automático para máxima diversidad)",
+                            elem_id="pasaporte_region"
+                        )
+                        
+                        edad_min_pasaporte = gr.Number(
+                            value=18, minimum=18, maximum=80, step=1,
+                            label="🎂 Edad Mínima",
+                            info="Edad mínima del rango",
+                            elem_id="pasaporte_edad_min"
+                        )
+                        
+                        edad_max_pasaporte = gr.Number(
+                            value=50, minimum=18, maximum=80, step=1,
+                            label="🎂 Edad Máxima",
+                            info="Edad máxima del rango",
+                            elem_id="pasaporte_edad_max"
+                        )
+                    
+                    with gr.Row():
+                        beauty_control = gr.Dropdown(
+                            choices=["aleatorio", "muy_atractivo", "atractivo", "normal", "promedio", "comun", "ordinario", "poco_atractivo", "feo", "muy_feo", "realista", "variado"],
+                            value="aleatorio",  # SIEMPRE usar aleatorio para máxima diversidad real
+                            label="💎 Control de Belleza",
+                            info="Nivel de atractivo (aleatorio = máxima diversidad real)",
+                            elem_id="beauty_control"
+                        )
+                        
+                        skin_control = gr.Dropdown(
+                            choices=["aleatorio", "light", "fair", "medium", "medium-dark", "olive", "tan", "golden", "bronze", "caramel", "honey", "dark", "rich brown", "coffee", "mahogany", "espresso", "chocolate", "mocha", "cinnamon", "amber", "copper", "peach", "ivory", "beige", "sand", "cream", "wheat", "almond", "hazelnut", "walnut", "chestnut", "cocoa", "ebony"],
+                            value=saved_skin if saved_skin in ["aleatorio", "light", "fair", "medium", "medium-dark", "olive", "tan", "golden", "bronze", "caramel", "honey", "dark", "rich brown", "coffee", "mahogany", "espresso", "chocolate", "mocha", "cinnamon", "amber", "copper", "peach", "ivory", "beige", "sand", "cream", "wheat", "almond", "hazelnut", "walnut", "chestnut", "cocoa", "ebony"] else "aleatorio",
+                            label="🎨 Control de Piel",
+                            info="Tono de piel específico (ultra expandido)",
+                            elem_id="skin_control"
+                        )
+                    
+                    with gr.Row():
+                        hair_control = gr.Dropdown(
+                            choices=["aleatorio", "black", "dark brown", "brown", "auburn", "chestnut", "chocolate", "espresso", "mahogany", "copper", "bronze", "light brown", "honey", "golden", "blonde", "strawberry blonde", "red", "ginger", "salt and pepper", "gray", "white", "platinum", "ash blonde", "dirty blonde", "sandy", "caramel", "cinnamon", "russet", "burgundy", "auburn", "copper", "bronze", "gold", "silver", "pepper", "salt"],
+                            value=saved_hair if saved_hair in ["aleatorio", "black", "dark brown", "brown", "auburn", "chestnut", "chocolate", "espresso", "mahogany", "copper", "bronze", "light brown", "honey", "golden", "blonde", "strawberry blonde", "red", "ginger", "salt and pepper", "gray", "white", "platinum", "ash blonde", "dirty blonde", "sandy", "caramel", "cinnamon", "russet", "burgundy", "auburn", "copper", "bronze", "gold", "silver", "pepper", "salt"] else "aleatorio",
+                            label="💇 Control de Cabello",
+                            info="Color de cabello específico (ultra expandido)",
+                            elem_id="hair_control"
+                        )
+                        
+                        eye_control = gr.Dropdown(
+                            choices=["aleatorio", "dark brown", "brown", "hazel", "amber", "light brown", "honey", "golden", "coffee", "chocolate", "mahogany", "green", "blue", "gray", "blue-green", "hazel-green", "amber-brown", "light hazel", "dark hazel", "emerald", "forest green", "sea green", "teal", "steel blue", "navy blue", "sky blue", "ice blue", "violet", "purple", "amber", "gold", "copper", "hazel"],
+                            value=saved_eye if saved_eye in ["aleatorio", "dark brown", "brown", "hazel", "amber", "light brown", "honey", "golden", "coffee", "chocolate", "mahogany", "green", "blue", "gray", "blue-green", "hazel-green", "amber-brown", "light hazel", "dark hazel", "emerald", "forest green", "sea green", "teal", "steel blue", "navy blue", "sky blue", "ice blue", "violet", "purple", "amber", "gold", "copper", "hazel"] else "aleatorio",
+                            label="👁️ Control de Ojos",
+                            info="Color de ojos específico (ultra expandido)",
+                            elem_id="eye_control"
+                        )
+                        
+                        background_control = gr.Dropdown(
+                            choices=["white"],
+                            value="white",
+                            label="🖼️ Control de Fondo",
+                            info="Fondo blanco sólido obligatorio (estricto)",
+                            elem_id="background_control"
+                        )
+                    
+                    # ===== NUEVOS CONTROLES ULTRA AVANZADOS =====
+                    with gr.Row():
+                        face_shape_control = gr.Dropdown(
+                            choices=["aleatorio", "oval", "round", "square", "heart", "diamond", "long", "triangular", "pear", "inverted triangle", "rectangular", "angular", "soft", "defined", "symmetrical", "asymmetrical", "wide", "narrow", "broad", "thin", "full", "hollow", "prominent", "recessed"],
+                            value="aleatorio",
+                            label="🎭 Forma de Cara",
+                            info="Forma facial específica (ultra expandida)",
+                            elem_id="face_shape_control"
+                        )
+                        
+                        nose_shape_control = gr.Dropdown(
+                            choices=["aleatorio", "straight", "aquiline", "button", "wide", "narrow", "small", "prominent", "delicate", "strong", "refined", "classic", "distinctive", "roman", "snub", "hooked", "bulbous", "pointed", "flat", "upturned", "downturned", "asymmetric", "perfect", "crooked", "broad", "thin", "long", "short", "large", "tiny", "bent", "twisted", "bumpy", "smooth", "rough", "textured", "elegant", "sturdy", "dainty"],
+                            value="aleatorio",
+                            label="👃 Forma de Nariz",
+                            info="Características nasales específicas (ultra expandidas)",
+                            elem_id="nose_shape_control"
+                        )
+                    
+                    with gr.Row():
+                        lip_shape_control = gr.Dropdown(
+                            choices=["aleatorio", "full", "medium", "thin", "wide", "narrow", "plump", "defined", "natural", "shapely", "expressive", "delicate", "strong", "pouty", "bow-shaped", "heart-shaped", "straight", "curved", "asymmetric", "perfect", "uneven", "thick", "thin", "long", "short", "prominent", "subtle", "large", "small", "wide", "narrow", "pursed", "relaxed", "tense", "loose", "voluptuous", "petite", "sensual", "charming"],
+                            value="aleatorio",
+                            label="👄 Forma de Labios",
+                            info="Características labiales específicas (ultra expandidas)",
+                            elem_id="lip_shape_control"
+                        )
+                        
+                        eye_shape_control = gr.Dropdown(
+                            choices=["aleatorio", "almond", "round", "hooded", "deep-set", "wide-set", "close-set", "upturned", "downturned", "monolid", "double-lid", "expressive", "intense", "gentle", "piercing", "sleepy", "alert", "droopy", "cat-like", "downturned", "upturned", "asymmetric", "perfect", "uneven", "large", "small", "prominent", "recessed", "bulging", "sunken", "puffy", "swollen", "narrow", "wide", "slanted", "straight", "bedroom", "doll-like", "fox-like", "downturned", "upturned"],
+                            value="aleatorio",
+                            label="👁️ Forma de Ojos",
+                            info="Características oculares específicas (ultra expandidas)",
+                            elem_id="eye_shape_control"
+                        )
+                    
+                    with gr.Row():
+                        jawline_control = gr.Dropdown(
+                            choices=["aleatorio", "strong", "soft", "defined", "rounded", "angular", "delicate", "square", "pointed", "weak", "prominent", "recessed", "asymmetric", "perfect", "uneven", "wide", "narrow", "broad", "thin", "full", "hollow", "sharp", "blunt", "chiseled", "soft", "hard", "firm", "loose", "tight", "relaxed", "tense", "masculine", "feminine"],
+                            value="aleatorio",
+                            label="🦴 Mandíbula",
+                            info="Características mandibulares específicas (ultra expandidas)",
+                            elem_id="jawline_control"
+                        )
+                        
+                        cheekbone_control = gr.Dropdown(
+                            choices=["aleatorio", "high", "medium", "low", "prominent", "subtle", "defined", "sharp", "soft", "angular", "rounded", "asymmetric", "perfect", "uneven", "wide", "narrow", "hollow", "full", "broad", "thin", "strong", "weak", "chiseled", "smooth", "rough", "textured", "flat", "raised", "sunken", "puffy", "swollen", "sculpted", "natural", "artificial"],
+                            value="aleatorio",
+                            label="🍎 Pómulos",
+                            info="Características de pómulos específicas (ultra expandidas)",
+                            elem_id="cheekbone_control"
+                        )
+                    
+                    with gr.Row():
+                        eyebrow_control = gr.Dropdown(
+                            choices=["aleatorio", "thick", "medium", "thin", "arched", "straight", "defined", "natural", "bushy", "sparse", "uneven", "perfect", "asymmetric", "high", "low", "close", "wide", "angled", "curved", "messy", "neat", "tidy", "unkempt", "wild", "smooth", "rough", "patchy", "full", "partial", "missing", "overgrown", "trimmed", "shaped", "microbladed", "tattooed"],
+                            value="aleatorio",
+                            label="👁️ Cejas",
+                            info="Características de cejas específicas (ultra expandidas)",
+                            elem_id="eyebrow_control"
+                        )
+                        
+                        skin_texture_control = gr.Dropdown(
+                            choices=["aleatorio", "smooth", "textured", "natural", "mature", "youthful", "rough", "fine", "coarse", "porous", "tight", "loose", "elastic", "dry", "oily", "combination", "blemished", "clear", "acne-prone", "sensitive", "resilient", "fragile", "thick", "thin", "firm", "soft", "wrinkled", "aged", "fresh", "dull", "glowing", "radiant", "dewy", "matte"],
+                            value="aleatorio",
+                            label="🎨 Textura de Piel",
+                            info="Textura de piel específica (ultra expandida)",
+                            elem_id="skin_texture_control"
+                        )
+                    
+                    with gr.Row():
+                        freckle_control = gr.Dropdown(
+                            choices=["aleatorio", "none", "light", "moderate", "heavy", "scattered", "concentrated", "bridge", "cheeks", "forehead", "nose", "chin", "arms", "shoulders", "back", "chest", "sparse", "dense", "faint", "dark", "light", "red", "brown", "golden", "sun-kissed", "natural", "artificial"],
+                            value="aleatorio",
+                            label="✨ Pecas",
+                            info="Características de pecas específicas (ultra expandidas)",
+                            elem_id="freckle_control"
+                        )
+                        
+                        mole_control = gr.Dropdown(
+                            choices=["aleatorio", "none", "small", "medium", "large", "multiple", "cheek", "chin", "forehead", "nose", "lip", "eye", "ear", "neck", "shoulder", "arm", "hand", "back", "chest", "leg", "foot", "facial", "body", "beauty", "mark", "birthmark", "congenital", "acquired", "benign", "suspicious"],
+                            value="aleatorio",
+                            label="🔸 Lunares",
+                            info="Características de lunares específicas (ultra expandidas)",
+                            elem_id="mole_control"
+                        )
+                    
+                    with gr.Row():
+                        scar_control = gr.Dropdown(
+                            choices=["aleatorio", "none", "small", "faint", "visible", "cheek", "chin", "forehead", "nose", "lip", "eye", "ear", "neck", "shoulder", "arm", "hand", "back", "chest", "leg", "foot", "surgical", "accident", "birth", "childhood", "adult", "recent", "old", "healed", "fresh", "faded"],
+                            value="aleatorio",
+                            label="🩹 Cicatrices",
+                            info="Características de cicatrices específicas (ultra expandidas)",
+                            elem_id="scar_control"
+                        )
+                        
+                        acne_control = gr.Dropdown(
+                            choices=["aleatorio", "none", "mild", "moderate", "severe", "scattered", "concentrated", "forehead", "cheeks", "chin", "nose", "back", "chest", "shoulders", "active", "healing", "scarred", "cystic", "blackheads", "whiteheads", "pustules", "papules", "nodules", "comedones", "inflammatory"],
+                            value="aleatorio",
+                            label="🔴 Acné",
+                            info="Características de acné específicas (ultra expandidas)",
+                            elem_id="acne_control"
+                        )
+                    
+                    with gr.Row():
+                        wrinkle_control = gr.Dropdown(
+                            choices=["aleatorio", "none", "fine expression lines", "light laugh lines", "subtle crow's feet", "forehead lines", "moderate expression lines", "crow's feet", "laugh lines", "worry lines", "deep expression lines", "pronounced crow's feet", "deep forehead lines", "neck lines", "age lines", "deep wrinkles"],
+                            value="aleatorio",
+                            label="📏 Arrugas",
+                            info="Características de arrugas apropiadas para la edad (coherente con edad)",
+                            elem_id="wrinkle_control"
+                        )
+                        
+                        hair_style_control = gr.Dropdown(
+                            choices=["aleatorio", "straight", "wavy", "curly", "braided", "ponytail", "bun", "pixie", "bob", "shoulder-length", "layered", "textured", "voluminous", "sleek", "styled", "natural", "professional", "casual", "messy", "neat", "tidy", "unkempt", "wild", "smooth", "rough", "thick", "thin", "fine", "coarse", "silky", "frizzy", "smooth", "tangled", "styled", "natural", "artificial", "extensions", "weave", "wig"],
+                            value="aleatorio",
+                            label="💇 Estilo de Cabello",
+                            info="Estilo de cabello específico (ultra expandido)",
+                            elem_id="hair_style_control"
+                        )
+
+                    # Botón para restablecer máxima diversidad en un clic
+                    with gr.Row():
+                        reset_diversidad_btn = gr.Button("♻️ Restablecer máxima diversidad", variant="secondary")
+
+                    def reset_max_diversity_fn():
+                        # Región aleatoria, belleza aleatorio, piel/cabello/ojos mixed, todos los controles ultra avanzados en aleatorio
+                        return (
+                            "aleatorio",  # region_pasaporte
+                            "aleatorio",  # beauty_control
+                            "aleatorio",  # skin_control
+                            "aleatorio",  # hair_control
+                            "aleatorio",  # eye_control
+                            "aleatorio",  # face_shape_control
+                            "aleatorio",  # nose_shape_control
+                            "aleatorio",  # lip_shape_control
+                            "aleatorio",  # eye_shape_control
+                            "aleatorio",  # jawline_control
+                            "aleatorio",  # cheekbone_control
+                            "aleatorio",  # eyebrow_control
+                            "aleatorio",  # skin_texture_control
+                            "aleatorio",  # freckle_control
+                            "aleatorio",  # mole_control
+                            "aleatorio",  # scar_control
+                            "aleatorio",  # acne_control
+                            "aleatorio",  # wrinkle_control
+                            "aleatorio",  # hair_style_control
+                        )
+
+                    reset_diversidad_btn.click(
+                        fn=reset_max_diversity_fn,
+                        inputs=[],
+                        outputs=[region_pasaporte, beauty_control, skin_control, hair_control, eye_control, 
+                                face_shape_control, nose_shape_control, lip_shape_control, eye_shape_control,
+                                jawline_control, cheekbone_control, eyebrow_control, skin_texture_control,
+                                freckle_control, mole_control, scar_control, acne_control, wrinkle_control, hair_style_control]
+                    )
+                
+                # Barra de progreso para generación masiva
+                progreso_masivo = gr.Progress()
+                
+                # Conectar eventos (la conexión del botón Aplicar Prompt se hará después de definir steps)
+                
+                # La conexión del evento se hará después de definir batch_count
+                
+                instrucciones_masivas_btn.click(
+                    fn=instrucciones_masivas_func,
+                    inputs=[nacionalidad_pasaporte, genero_pasaporte, edad_pasaporte, cantidad_masiva_pasaporte],
+                    outputs=info_pasaporte
+                )
+                
+                abrir_carpeta_btn.click(
+                    fn=abrir_carpeta_imagenes_func,
+                    outputs=info_pasaporte
+                )
+                
+                abrir_carpeta_masivos_btn.click(
+                    fn=abrir_carpeta_masivos_func,
+                    outputs=info_pasaporte
+                )
+                
+                ver_progreso_btn.click(
+                    fn=ver_progreso_masivo_func,
+                    outputs=info_pasaporte
+                )
+                
+                verificar_modelo_btn.click(
+                    fn=verificar_modelo_actual_func,
+                    outputs=info_pasaporte
+                )
+
+            # Configuración normal de txt2img
             with ExitStack() as stack:
                 if shared.opts.txt2img_settings_accordion:
-                    stack.enter_context(gr.Accordion("Open for Settings", open=False))
+                    stack.enter_context(gr.Accordion("Open for Settings", open=True))
                 stack.enter_context(gr.Column(variant='compact', elem_id="txt2img_settings"))
 
                 scripts.scripts_txt2img.prepare_ui()
@@ -300,7 +2991,7 @@ def create_ui():
 
                     elif category == "cfg":
                         with gr.Row():
-                            cfg_scale = gr.Slider(minimum=1.0, maximum=30.0, step=0.5, label='CFG Scale', value=7.0, elem_id="txt2img_cfg_scale")
+                            cfg_scale = gr.Slider(minimum=1.0, maximum=30.0, step=0.5, label='CFG Scale', value=12.0, elem_id="txt2img_cfg_scale")
 
                     elif category == "checkboxes":
                         with FormRow(elem_classes="checkboxes-row", variant="compact"):
@@ -376,7 +3067,7 @@ def create_ui():
                     show_progress=False,
                 )
 
-            output_panel = create_output_panel("txt2img", opts.outdir_txt2img_samples, toprow)
+            # Panel de salida ya definido arriba en el lado izquierdo
 
             txt2img_inputs = [
                 dummy_component,
@@ -420,6 +3111,8 @@ def create_ui():
 
             toprow.prompt.submit(**txt2img_args)
             toprow.submit.click(**txt2img_args)
+
+            # Las conexiones de los botones de generación se harán después de definir steps
 
             output_panel.button_upscale.click(
                 fn=wrap_gradio_gpu_call(modules.txt2img.txt2img_upscale, extra_outputs=[None, '', '']),
@@ -475,6 +3168,73 @@ def create_ui():
 
             steps = scripts.scripts_txt2img.script('Sampler').steps
 
+            # Conectar el botón Aplicar Prompt después de definir steps
+            aplicar_prompt_pasaporte_btn.click(
+                fn=aplicar_prompt_pasaporte_func,
+                inputs=[nacionalidad_pasaporte, genero_pasaporte, edad_pasaporte],
+                outputs=[toprow.prompt, toprow.negative_prompt, width, height, cfg_scale, steps, scripts.scripts_txt2img.script('Sampler').sampler_name, scripts.scripts_txt2img.script('Seed').seed, batch_count, batch_size, denoising_strength, hr_second_pass_steps, hr_scale, hr_resize_x, hr_resize_y, hr_upscaler, hr_sampler_name, hr_scheduler, refiner_checkpoint, refiner_switch_at, info_pasaporte]
+            )
+
+            # Conectar botones del sistema de plantillas mejorado
+            guardar_plantilla_btn.click(
+                fn=guardar_plantilla_ui,
+                inputs=[nombre_plantilla, toprow.prompt, toprow.negative_prompt, width, height, cfg_scale, steps, scripts.scripts_txt2img.script('Sampler').sampler_name, scripts.scripts_txt2img.script('Seed').seed, batch_count, batch_size, denoising_strength, hr_second_pass_steps, hr_scale, hr_resize_x, hr_resize_y, hr_upscaler, hr_sampler_name, hr_scheduler, refiner_checkpoint, refiner_switch_at],
+                outputs=[info_plantillas, plantillas_dropdown, nombre_plantilla]
+            )
+
+            cargar_plantilla_btn.click(
+                fn=cargar_plantilla_ui,
+                inputs=[plantillas_dropdown],
+                outputs=[toprow.prompt, toprow.negative_prompt, width, height, cfg_scale, steps, scripts.scripts_txt2img.script('Sampler').sampler_name, scripts.scripts_txt2img.script('Seed').seed, batch_count, batch_size, denoising_strength, hr_second_pass_steps, hr_scale, hr_resize_x, hr_resize_y, hr_upscaler, hr_sampler_name, hr_scheduler, refiner_checkpoint, refiner_switch_at, info_plantillas]
+            )
+
+            eliminar_plantilla_btn.click(
+                fn=eliminar_plantilla_ui,
+                inputs=[plantillas_dropdown],
+                outputs=[info_plantillas, plantillas_dropdown]
+            )
+
+            # El dropdown se inicializa automáticamente con las plantillas disponibles
+            
+            # El dropdown se actualizará automáticamente cuando se guarde una plantilla
+
+            # Conectar botones de generación después de definir steps
+            generar_masivo_pasaporte_btn.click(
+                fn=generar_masivo_pasaporte_func,
+                inputs=[nacionalidad_pasaporte, genero_pasaporte, edad_pasaporte, cantidad_masiva_pasaporte, edad_min_pasaporte, edad_max_pasaporte, region_pasaporte, cfg_scale, steps, scripts.scripts_txt2img.script('Sampler').sampler_name, scripts.scripts_txt2img.script('Seed').seed, width, height, batch_count, batch_size, denoising_strength, hr_second_pass_steps, hr_scale, hr_resize_x, hr_resize_y, hr_upscaler, hr_sampler_name, hr_scheduler, refiner_checkpoint, refiner_switch_at],
+                outputs=[toprow.prompt, toprow.negative_prompt, batch_count, batch_size, info_pasaporte],
+                show_progress=True
+            ).then(
+                fn=lambda: gr.update(visible=True),
+                inputs=[],
+                outputs=[detener_generacion_btn]
+            )
+            
+            detener_generacion_btn.click(
+                fn=detener_generacion_func,
+                inputs=[],
+                outputs=[info_pasaporte],
+                show_progress=False
+            ).then(
+                fn=lambda: gr.update(visible=False),
+                inputs=[],
+                outputs=[detener_generacion_btn]
+            )
+            
+            generar_genetico_btn.click(
+                fn=generar_masivo_genetico_func,
+                inputs=[nacionalidad_pasaporte, genero_pasaporte, edad_pasaporte, cantidad_masiva_pasaporte, 
+                       region_pasaporte, edad_min_pasaporte, edad_max_pasaporte, 
+                       beauty_control, skin_control, hair_control, eye_control, background_control,
+                       cfg_scale, steps, scripts.scripts_txt2img.script('Sampler').sampler_name, scripts.scripts_txt2img.script('Seed').seed, width, height, batch_count, batch_size, denoising_strength, hr_second_pass_steps, hr_scale, hr_resize_x, hr_resize_y, hr_upscaler, hr_sampler_name, hr_scheduler, refiner_checkpoint, refiner_switch_at],
+                outputs=[toprow.prompt, toprow.negative_prompt, batch_count, batch_size, info_pasaporte],
+                show_progress=True
+            ).then(
+                fn=lambda: gr.update(visible=True),
+                inputs=[],
+                outputs=[detener_generacion_btn]
+            )
+
             txt2img_preview_params = [
                 toprow.prompt,
                 toprow.negative_prompt,
@@ -508,7 +3268,7 @@ def create_ui():
         with gr.Tab("Generation", id="img2img_generation") as img2img_generation_tab, ResizeHandleRow(equal_height=False):
             with ExitStack() as stack:
                 if shared.opts.img2img_settings_accordion:
-                    stack.enter_context(gr.Accordion("Open for Settings", open=False))
+                    stack.enter_context(gr.Accordion("Open for Settings", open=True))
                 stack.enter_context(gr.Column(variant='compact', elem_id="img2img_settings"))
 
                 copy_image_buttons = []
@@ -585,7 +3345,7 @@ def create_ui():
                                         img2img_batch_inpaint_mask_dir = gr.Textbox(label="Inpaint batch mask directory (required for inpaint batch processing only)", **shared.hide_dirs, elem_id="img2img_batch_inpaint_mask_dir")
                                 tab_batch_upload.select(fn=lambda: "upload", inputs=[], outputs=[img2img_batch_source_type])
                                 tab_batch_from_dir.select(fn=lambda: "from dir", inputs=[], outputs=[img2img_batch_source_type])
-                                with gr.Accordion("PNG info", open=False):
+                                with gr.Accordion("PNG info", open=True):
                                     img2img_batch_use_png_info = gr.Checkbox(label="Append png info to prompts", elem_id="img2img_batch_use_png_info")
                                     img2img_batch_png_info_dir = gr.Textbox(label="PNG info directory", **shared.hide_dirs, placeholder="Leave empty to use input directory", elem_id="img2img_batch_png_info_dir")
                                     img2img_batch_png_info_props = gr.CheckboxGroup(["Prompt", "Negative prompt", "Seed", "CFG scale", "Sampler", "Steps", "Model hash"], label="Parameters to take from png info", info="Prompts from png info will be appended to prompts set in ui.")
@@ -1132,6 +3892,16 @@ def create_ui():
         shared.tab_names.append(label)
 
     with gr.Blocks(theme=shared.gradio_theme, analytics_enabled=False, title="Stable Diffusion") as demo:
+        # Cargar CSS personalizado para pasaportes
+        try:
+            css_path = Path(__file__).parent.parent / "pasaportes_style.css"
+            if css_path.exists():
+                with open(css_path, 'r', encoding='utf-8') as f:
+                    custom_css = f.read()
+                demo.css = custom_css
+        except Exception as e:
+            print(f"Warning: No se pudo cargar CSS personalizado: {e}")
+        
         settings.add_quicksettings()
 
         parameters_copypaste.connect_paste_params_buttons()
@@ -1233,3 +4003,4 @@ def setup_ui_api(app):
 
     import fastapi.staticfiles
     app.mount("/webui-assets", fastapi.staticfiles.StaticFiles(directory=launch_utils.repo_dir('stable-diffusion-webui-assets')), name="webui-assets")
+

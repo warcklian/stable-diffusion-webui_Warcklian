@@ -1,0 +1,170 @@
+{
+  "regions": [
+    "caracas", "maracaibo", "valencia", "barquisimeto", "ciudad_guayana", 
+    "maturin", "merida", "san_cristobal", "barcelona", "puerto_la_cruz",
+    "ciudad_bolivar", "tucupita", "porlamar", "valera", "acarigua",
+    "guanare", "san_fernando", "trujillo", "el_tigre", "cabimas",
+    "punto_fijo", "ciudad_ojeda", "puerto_cabello", "valle_de_la_pascua",
+    "san_juan_de_los_morros", "carora", "tocuyo", "duaca", "siquisique",
+    "araure", "turen", "guanarito", "santa_elena", "el_venado",
+    "san_rafael", "san_antonio", "la_fria", "rubio", "colon",
+    "tachira", "apure", "amazonas", "delta_amacuro", "yacambu",
+    "lara", "portuguesa", "cojedes", "guarico", "anzoategui",
+    "monagas", "sucre", "nueva_esparta", "falcon", "zulia",
+    "merida", "trujillo", "barinas", "yaracuy", "carabobo",
+    "aragua", "miranda", "vargas", "distrito_capital"
+  ],
+  "skin_tones": [
+    "light", "fair", "medium", "medium-dark", "olive", "tan", "golden",
+    "bronze", "caramel", "honey", "dark", "rich brown", "coffee",
+    "mahogany", "espresso", "chocolate", "mocha", "cinnamon", "amber",
+    "copper", "peach", "ivory", "beige", "sand", "cream", "wheat",
+    "almond", "hazelnut", "walnut", "chestnut", "cocoa", "ebony"
+  ],
+  "hair_colors": [
+    "black", "dark brown", "brown", "auburn", "chestnut", "chocolate",
+    "espresso", "mahogany", "copper", "bronze", "light brown", "honey",
+    "golden", "blonde", "strawberry blonde", "red", "ginger", "salt and pepper",
+    "gray", "white", "platinum", "ash blonde", "dirty blonde", "sandy",
+    "caramel", "cinnamon", "russet", "burgundy", "auburn", "copper",
+    "bronze", "gold", "silver", "pepper", "salt", "mixed"
+  ],
+  "eye_colors": [
+    "dark brown", "brown", "hazel", "amber", "light brown", "honey",
+    "golden", "coffee", "chocolate", "mahogany", "green", "blue",
+    "gray", "blue-green", "hazel-green", "amber-brown", "light hazel",
+    "dark hazel", "emerald", "forest green", "sea green", "teal",
+    "steel blue", "navy blue", "sky blue", "ice blue", "violet",
+    "purple", "amber", "gold", "copper", "hazel", "mixed"
+  ],
+  "face_shapes": [
+    "oval", "round", "square", "heart", "diamond", "long", "triangular",
+    "pear", "inverted triangle", "rectangular", "angular", "soft",
+    "defined", "symmetrical", "asymmetrical", "wide", "narrow", "broad",
+    "thin", "full", "hollow", "prominent", "recessed", "angular",
+    "rounded", "oval", "square", "heart", "diamond", "pear"
+  ],
+  "nose_shapes": [
+    "straight", "aquiline", "button", "wide", "narrow", "small",
+    "prominent", "delicate", "strong", "refined", "classic", "distinctive",
+    "roman", "snub", "hooked", "bulbous", "pointed", "flat", "upturned",
+    "downturned", "asymmetric", "perfect", "crooked", "broad", "thin",
+    "long", "short", "large", "tiny", "bent", "twisted", "bumpy",
+    "smooth", "rough", "textured", "elegant", "sturdy", "dainty"
+  ],
+  "lip_shapes": [
+    "full", "medium", "thin", "wide", "narrow", "plump", "defined",
+    "natural", "shapely", "expressive", "delicate", "strong", "pouty",
+    "bow-shaped", "heart-shaped", "straight", "curved", "asymmetric",
+    "perfect", "uneven", "thick", "thin", "long", "short", "prominent",
+    "subtle", "large", "small", "wide", "narrow", "pursed", "relaxed",
+    "tense", "loose", "voluptuous", "petite", "sensual", "charming"
+  ],
+  "eye_shapes": [
+    "almond", "round", "hooded", "deep-set", "wide-set", "close-set",
+    "upturned", "downturned", "monolid", "double-lid", "expressive",
+    "intense", "gentle", "piercing", "sleepy", "alert", "droopy",
+    "cat-like", "downturned", "upturned", "asymmetric", "perfect",
+    "uneven", "large", "small", "prominent", "recessed", "bulging",
+    "sunken", "puffy", "swollen", "narrow", "wide", "slanted", "straight",
+    "bedroom", "doll-like", "fox-like", "downturned", "upturned"
+  ],
+  "hair_styles": [
+    "straight", "wavy", "curly", "braided", "ponytail", "bun", "pixie",
+    "bob", "shoulder-length", "layered", "textured", "voluminous",
+    "sleek", "styled", "natural", "professional", "casual", "messy",
+    "neat", "tidy", "unkempt", "wild", "smooth", "rough", "thick",
+    "thin", "fine", "coarse", "silky", "frizzy", "smooth", "tangled",
+    "styled", "natural", "artificial", "extensions", "weave", "wig",
+    "chinos", "trenzas", "lacio", "largo", "corto", "con luces", "raytitos",
+    "mechones", "highlights", "lowlights", "ombre", "balayage", "foils",
+    "streaks", "tips", "roots", "gradient", "ombre", "dip dye", "color block",
+    "rainbow", "pastel", "vibrant", "natural", "subtle", "bold", "dramatic",
+    "soft", "harsh", "blended", "contrasting", "complementary", "matching",
+    "coordinated", "harmonious", "striking", "eye-catching", "attention-grabbing",
+    "cornrows", "dreadlocks", "twists", "bantu knots", "afro", "coily",
+    "fade", "buzz cut", "crew cut", "undercut", "mohawk", "chignon", "updo",
+    "half up", "messy", "neat", "blowout", "curled", "straightened"
+  ],
+  "eyebrow_shapes": [
+    "thick", "medium", "thin", "arched", "straight", "defined", "natural",
+    "bushy", "sparse", "uneven", "perfect", "asymmetric", "high", "low",
+    "close", "wide", "angled", "curved", "messy", "neat", "tidy",
+    "unkempt", "wild", "smooth", "rough", "patchy", "full", "partial",
+    "missing", "overgrown", "trimmed", "shaped", "microbladed", "tattooed"
+  ],
+  "jawline_types": [
+    "strong", "soft", "defined", "rounded", "angular", "delicate",
+    "square", "pointed", "weak", "prominent", "recessed", "asymmetric",
+    "perfect", "uneven", "wide", "narrow", "broad", "thin", "full",
+    "hollow", "sharp", "blunt", "chiseled", "soft", "hard", "firm",
+    "loose", "tight", "relaxed", "tense", "masculine", "feminine"
+  ],
+  "cheekbone_types": [
+    "high", "medium", "low", "prominent", "subtle", "defined", "sharp",
+    "soft", "angular", "rounded", "asymmetric", "perfect", "uneven",
+    "wide", "narrow", "hollow", "full", "broad", "thin", "strong",
+    "weak", "chiseled", "smooth", "rough", "textured", "flat", "raised",
+    "sunken", "puffy", "swollen", "sculpted", "natural", "artificial"
+  ],
+  "skin_textures": [
+    "smooth", "textured", "natural", "mature", "youthful", "rough",
+    "fine", "coarse", "porous", "tight", "loose", "elastic", "dry",
+    "oily", "combination", "blemished", "clear", "acne-prone", "sensitive",
+    "resilient", "fragile", "thick", "thin", "firm", "soft", "wrinkled",
+    "aged", "fresh", "dull", "glowing", "radiant", "dewy", "matte"
+  ],
+  "beauty_levels": [
+    "muy_atractivo", "atractivo", "normal", "promedio", "comun",
+    "ordinario", "poco_atractivo", "feo", "muy_feo", "realista",
+    "variado", "excepcional", "hermoso", "guapo", "bonito", "lindo",
+    "encantador", "carismatico", "interesante", "unico", "distintivo"
+  ],
+  "freckle_types": [
+    "none", "light", "moderate", "heavy", "scattered", "concentrated",
+    "bridge", "cheeks", "forehead", "nose", "chin", "arms", "shoulders",
+    "back", "chest", "sparse", "dense", "faint", "dark", "light",
+    "red", "brown", "golden", "sun-kissed", "natural", "artificial"
+  ],
+  "mole_types": [
+    "none", "small", "medium", "large", "multiple", "cheek", "chin",
+    "forehead", "nose", "lip", "eye", "ear", "neck", "shoulder", "arm",
+    "hand", "back", "chest", "leg", "foot", "facial", "body", "beauty",
+    "mark", "birthmark", "congenital", "acquired", "benign", "suspicious"
+  ],
+  "scar_types": [
+    "none", "small", "faint", "visible", "cheek", "chin", "forehead",
+    "nose", "lip", "eye", "ear", "neck", "shoulder", "arm", "hand",
+    "back", "chest", "leg", "foot", "surgical", "accident", "birth",
+    "childhood", "adult", "recent", "old", "healed", "fresh", "faded"
+  ],
+  "acne_types": [
+    "none", "mild", "moderate", "severe", "scattered", "concentrated",
+    "forehead", "cheeks", "chin", "nose", "back", "chest", "shoulders",
+    "active", "healing", "scarred", "cystic", "blackheads", "whiteheads",
+    "pustules", "papules", "nodules", "comedones", "inflammatory"
+  ],
+  "wrinkle_types": [
+    "none", "fine", "moderate", "deep", "forehead", "eye", "mouth",
+    "neck", "crow's feet", "laugh lines", "frown lines", "worry lines",
+    "smile lines", "expression lines", "age lines", "sun damage",
+    "genetic", "lifestyle", "dynamic", "static", "gravitational",
+    "sleep", "smoking", "environmental", "hormonal", "stress"
+  ],
+  "age_ranges": [
+    "18-25 years old",
+    "26-35 years old", 
+    "36-45 years old",
+    "46-55 years old",
+    "56-65 years old",
+    "66-75 years old"
+  ],
+  "nationalities": [
+    "venezuelan", "cuban", "haitian", "dominican", "puerto rican",
+    "mexican", "colombian", "peruvian", "ecuadorian", "bolivian",
+    "chilean", "argentine", "uruguayan", "paraguayan", "brazilian"
+  ],
+  "genders": [
+    "man", "woman"
+  ]
+}
