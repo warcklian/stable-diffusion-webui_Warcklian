@@ -30,6 +30,17 @@ except ImportError:
     MEMORY_MANAGER_AVAILABLE = False
     print("⚠️ Sistema de gestión de memoria no disponible")
 
+# Importar módulos de optimización
+try:
+    from modules.memory_optimizer import get_memory_optimizer, cleanup_memory_if_needed, optimize_batch_configuration
+    from modules.saime_validator import validate_saime_compliance, generate_saime_report
+    from modules.intelligent_balancer import get_intelligent_balancer, add_generation_to_balance, get_balanced_characteristics, get_balancing_stats
+    OPTIMIZATION_MODULES_AVAILABLE = True
+    print("✅ Módulos de optimización cargados correctamente")
+except ImportError as e:
+    OPTIMIZATION_MODULES_AVAILABLE = False
+    print(f"⚠️ Módulos de optimización no disponibles: {e}")
+
 import modules.infotext_utils as parameters_copypaste
 import modules.hypernetworks.ui as hypernetworks_ui
 import modules.textual_inversion.ui as textual_inversion_ui
@@ -347,7 +358,7 @@ def create_ui():
                             with FormRow():
                                 with gr.Column(elem_id="txt2img_column_size", scale=4):
                                     width = gr.Slider(minimum=64, maximum=2048, step=8, label="Width", value=512, elem_id="txt2img_width")
-                                    height = gr.Slider(minimum=64, maximum=2048, step=8, label="Height", value=512, elem_id="txt2img_height")
+                                    height = gr.Slider(minimum=64, maximum=2048, step=8, label="Height", value=768, elem_id="txt2img_height")
 
                                 with gr.Column(elem_id="txt2img_dimensions_row", scale=1, elem_classes="dimensions-tools"):
                                     res_switch_btn = ToolButton(value=switch_values_symbol, elem_id="txt2img_res_switch_btn", tooltip="Switch width/height")
@@ -931,6 +942,20 @@ def create_ui():
                     global generation_cancelled
                     generation_cancelled = False  # Resetear flag de cancelación
                     
+                    # Optimización de memoria para generación masiva
+                    if OPTIMIZATION_MODULES_AVAILABLE:
+                        try:
+                            memory_optimizer = get_memory_optimizer()
+                            memory_optimizer.cleanup_memory(force=True)
+                            
+                            # Optimizar configuración de lote
+                            optimization_result = optimize_batch_configuration(int(cantidad), int(batch_size))
+                            if optimization_result["optimization_applied"]:
+                                batch_size = optimization_result["recommended_batch_size"]
+                                print(f"🔧 Optimización de memoria aplicada: batch_size ajustado a {batch_size}")
+                        except Exception as e:
+                            print(f"⚠️ Error en optimización de memoria: {e}")
+                    
                     try:
                         # Guardar configuración genética automáticamente
                         guardar_configuracion_genetica(beauty_control, skin_control, hair_control, eye_control, background_control, region)
@@ -994,6 +1019,14 @@ def create_ui():
                             # Verificar si la generación fue cancelada
                             if generation_cancelled:
                                 return "", "", 1, 1, "🛑 Generación cancelada por el usuario"
+                            
+                            # Optimización de memoria durante la generación
+                            if OPTIMIZATION_MODULES_AVAILABLE and i % 5 == 0:  # Cada 5 imágenes
+                                try:
+                                    memory_optimizer = get_memory_optimizer()
+                                    memory_optimizer.cleanup_memory()
+                                except Exception as e:
+                                    print(f"⚠️ Error en limpieza de memoria: {e}")
                             
                             try:
                                 # Debug: Inicio de generación
@@ -2979,7 +3012,7 @@ def create_ui():
                         with FormRow():
                             with gr.Column(elem_id="txt2img_column_size", scale=4):
                                 width = gr.Slider(minimum=64, maximum=2048, step=8, label="Width", value=512, elem_id="txt2img_width")
-                                height = gr.Slider(minimum=64, maximum=2048, step=8, label="Height", value=512, elem_id="txt2img_height")
+                                height = gr.Slider(minimum=64, maximum=2048, step=8, label="Height", value=768, elem_id="txt2img_height")
 
                             with gr.Column(elem_id="txt2img_dimensions_row", scale=1, elem_classes="dimensions-tools"):
                                 res_switch_btn = ToolButton(value=switch_values_symbol, elem_id="txt2img_res_switch_btn", tooltip="Switch width/height")

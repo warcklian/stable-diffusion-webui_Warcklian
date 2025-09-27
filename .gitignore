@@ -42,3 +42,33 @@ notification.mp3
 /cache
 trace.json
 /sysinfo-????-??-??-??-??.json
+
+# Excluir archivos de prueba y temporales
+test_*.py
+*_test.py
+*_backup.py
+*_old.py
+*_temp.py
+*.tmp
+*.bak
+
+# Excluir archivos de configuración local
+config.json
+ui-config.json
+webui-user.bat
+webui-user.sh
+
+# Excluir directorios de salida
+/outputs/*
+!/outputs/.gitkeep
+
+# Excluir archivos de log
+*.log
+logs/
+
+# Excluir archivos de Python compilado
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
